@@ -311,7 +311,7 @@ function renderWaterfallSvg(baseValue, score, rows) {
     return `<p class="waterfall-empty">No SHAP rows to plot.</p>`;
   }
 
-  const rowH = 38;
+  const rowH = 46;
   const padL = 372;
   const padR = 28;
   const padT = 14;
@@ -393,8 +393,8 @@ function renderWaterfallSvg(baseValue, score, rows) {
     const row = 1 + i;
     const st = steps[i];
     svg += `<g><title>${svgEscape(st.feature)}</title>
-      <text class="wf-feat-val" x="12" y="${yMid(row) - 8}">${svgEscape(`${formatFeatVal(st.value)} =`)}</text>
-      <text class="wf-feat-name" x="12" y="${yMid(row) + 10}">${svgEscape(shortWaterfallFeat(st.feature))}</text>
+      <text class="wf-feat-val" x="12" y="${yMid(row) - 10}">${svgEscape(`${formatFeatVal(st.value)} =`)}</text>
+      <text class="wf-feat-name" x="12" y="${yMid(row) + 14}">${svgEscape(shortWaterfallFeat(st.feature))}</text>
     </g>`;
   }
   svg += `<text class="wf-svg-title" x="12" y="${yMid(n + 1) + 5}">${svgEscape(`E[f(x)] = ${base.toFixed(4)}`)}</text>`;

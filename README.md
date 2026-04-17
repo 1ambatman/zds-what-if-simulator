@@ -1,6 +1,12 @@
-# What-If Score Simulator
+# ZDS What If Simulator
 
 Local web app that reproduces the **what_if_simulator** notebook: load customer feature rows from a Databricks Unity Catalog predictions table, score with a **LightGBM** model from **MLflow**, and explore **SHAP**-driven what-if scenarios.
+
+## Repository
+
+- **GitHub:** [github.com/1ambatman/zds-what-if-simulator](https://github.com/1ambatman/zds-what-if-simulator) (repository renamed from `what-if-simulator`).
+- If your local clone still uses the old remote URL, run:  
+  `git remote set-url origin https://github.com/1ambatman/zds-what-if-simulator.git`
 
 ## Prerequisites
 
@@ -11,7 +17,7 @@ Local web app that reproduces the **what_if_simulator** notebook: load customer 
 ## Setup
 
 ```bash
-cd what-if-simulator
+cd zds-what-if-simulator
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
@@ -46,8 +52,10 @@ To confirm the app can reach your SQL warehouse (after configuring `.env` or a p
 Alternatively:
 
 ```bash
-what-if-simulator
+zds-what-if-simulator
 ```
+
+(After `pip install -e .`, the `zds-what-if-simulator` console script runs the same app as `python -m what_if_app.run`.)
 
 ## Usage
 

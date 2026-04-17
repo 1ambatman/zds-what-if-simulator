@@ -1,7 +1,7 @@
 [project]
-name = "what-if-simulator"
+name = "zds-what-if-simulator"
 version = "0.1.0"
-description = "Local what-if risk score simulator with Databricks data"
+description = "ZDS What If Simulator — local risk score what-if analysis with Databricks data"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-what-if-simulator = "what_if_app.run:main"
+zds-what-if-simulator = "what_if_app.run:main"
 
 [build-system]
 requires = ["setuptools>=61"]

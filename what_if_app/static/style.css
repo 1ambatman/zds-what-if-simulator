@@ -457,10 +457,11 @@ textarea {
   background: linear-gradient(180deg, #f472b6, #fb7185);
 }
 
+/* One column so each waterfall stays full width — side-by-side scaled SVGs down to ~50% width and shrinks all text. */
 .shap-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1rem;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
 }
 
 .shap-list {
@@ -516,7 +517,7 @@ textarea {
 
 .waterfall-svg text.wf-svg-title {
   fill: #e8ecff;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -527,13 +528,13 @@ textarea {
 
 .waterfall-svg text.wf-svg-phi {
   fill: #f0f4ff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .waterfall-svg text.wf-svg-tick {
   fill: #8b95b8;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .waterfall-legend {
@@ -640,13 +641,14 @@ textarea {
 }
 
 .waterfall-svg text.wf-feat-val {
-  fill: #c8d0f0;
-  font-size: 10px;
+  fill: #e8ecff;
+  font-size: 14px;
 }
 
 .waterfall-svg text.wf-feat-name {
-  fill: #a8b0d0;
-  font-size: 9px;
+  fill: #eef1ff;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .delta-table {

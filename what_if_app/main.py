@@ -121,7 +121,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="What-If Score Simulator", lifespan=lifespan)
+app = FastAPI(title="ZDS What If Simulator", lifespan=lifespan)
 
 
 @app.get("/api/health")
