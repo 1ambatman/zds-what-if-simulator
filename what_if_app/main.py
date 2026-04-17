@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,6 +25,50 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 profiles_store: dict[str, pd.DataFrame] = {}
 profile_meta: dict[str, dict[str, Any]] = {}
 model_load_error: str | None = None
+model_loading: bool = False
+_load_generation: int = 0
+_model_load_started_at: float | None = None
+
+
+def _model_unavailable_detail() -> str:
+    if model_loading:
+        return "Model is still loading from MLflow (downloading artifacts). Retry in a few seconds."
+    return model_load_error or "Model not loaded"
+
+
+def _background_load_model(gen: int) -> None:
+    global model_load_error, model_loading, _load_generation
+    try:
+        from what_if_app.databricks_io import apply_databricks_profile_to_environ
+
+        apply_databricks_profile_to_environ()
+        booster, explainer = load_model_from_mlflow()
+        if gen != _load_generation:
+            return
+        init_runtime(booster, explainer)
+        model_load_error = None
+    except Exception as e:  # noqa: BLE001
+        if gen != _load_generation:
+            return
+        model_load_error = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+    finally:
+        if gen == _load_generation:
+            model_loading = False
+
+
+def _watchdog_load_timeout(expected_gen: int) -> None:
+    global model_load_error, model_loading, _load_generation
+    time.sleep(settings.mlflow_load_timeout_seconds)
+    if expected_gen != _load_generation or not model_loading:
+        return
+    model_load_error = (
+        f"Timed out after {settings.mlflow_load_timeout_seconds}s waiting for MLflow artifacts. "
+        "Downloads often fail or retry forever with SSLError (VPN, proxy, TLS inspection). "
+        "Export the model folder from the MLflow UI (or use `mlflow artifacts download`) and set "
+        "LOCAL_MODEL_PATH in .env, or try another network. Increase MLFLOW_LOAD_TIMEOUT_SECONDS if needed."
+    )
+    _load_generation += 1
+    model_loading = False
 
 
 def _profile_id(customer_id: str, ref: str) -> str:
@@ -61,13 +107,16 @@ def _build_profiles_from_df(df: pd.DataFrame) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global model_load_error
-    try:
-        booster, explainer = load_model_from_mlflow()
-        init_runtime(booster, explainer)
-        model_load_error = None
-    except Exception as e:  # noqa: BLE001
-        model_load_error = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+    global model_load_error, model_loading, _load_generation, _model_load_started_at
+    model_load_error = None
+    model_loading = True
+    _model_load_started_at = time.monotonic()
+    _load_generation += 1
+    gen = _load_generation
+    threading.Thread(target=_background_load_model, args=(gen,), daemon=True, name="mlflow-model-load").start()
+    threading.Thread(
+        target=_watchdog_load_timeout, args=(gen,), daemon=True, name="mlflow-load-watchdog"
+    ).start()
     yield
 
 
@@ -76,11 +125,35 @@ app = FastAPI(title="What-If Score Simulator", lifespan=lifespan)
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    elapsed = None
+    stuck_hint = None
+    if model_loading and _model_load_started_at is not None:
+        elapsed = round(time.monotonic() - _model_load_started_at, 1)
+        if elapsed > 90:
+            stuck_hint = (
+                "Still downloading — SSL errors in the terminal usually mean the blob download cannot complete. "
+                "Set LOCAL_MODEL_PATH to an exported model folder, or wait for timeout."
+            )
     return {
         "ok": model_load_error is None and ml_core.is_ready(),
         "model_loaded": ml_core.is_ready(),
+        "model_loading": model_loading,
+        "load_elapsed_sec": elapsed,
+        "load_stuck_hint": stuck_hint,
         "error": model_load_error,
     }
+
+
+@app.get("/api/databricks-health")
+def databricks_health() -> dict[str, Any]:
+    """Verify SQL warehouse credentials (profile or .env) with SELECT 1."""
+    from what_if_app.databricks_io import ping_databricks_sql
+
+    try:
+        ping_databricks_sql()
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "detail": str(e)}
+    return {"ok": True, "detail": "SQL warehouse accepts queries"}
 
 
 @app.get("/api/meta")
@@ -110,7 +183,7 @@ class LoadRequest(BaseModel):
 @app.post("/api/load")
 def load_profiles(req: LoadRequest) -> dict[str, Any]:
     if not ml_core.is_ready():
-        raise HTTPException(503, detail=model_load_error or "Model not loaded")
+        raise HTTPException(503, detail=_model_unavailable_detail())
     table = (req.predictions_table or settings.predictions_table).strip()
     if req.mode == "input_table":
         if not req.input_table:
@@ -164,7 +237,7 @@ class WhatIfRequest(BaseModel):
 @app.post("/api/what-if")
 def what_if(req: WhatIfRequest) -> dict[str, Any]:
     if not ml_core.is_ready():
-        raise HTTPException(503, detail=model_load_error or "Model not loaded")
+        raise HTTPException(503, detail=_model_unavailable_detail())
     pid = req.profile_id
     if pid not in profiles_store:
         raise HTTPException(404, detail="Unknown profile_id; run load first.")
@@ -220,6 +293,8 @@ def what_if(req: WhatIfRequest) -> dict[str, Any]:
 
 @app.get("/api/profile-features/{profile_id}")
 def profile_features(profile_id: str) -> dict[str, Any]:
+    if not ml_core.is_ready():
+        raise HTTPException(503, detail=_model_unavailable_detail())
     if profile_id not in profiles_store:
         raise HTTPException(404, detail="Unknown profile")
     pdf = profiles_store[profile_id]

@@ -15,6 +15,7 @@ dependencies = [
   "shap>=0.45.0",
   "mlflow>=2.16.0",
   "databricks-sql-connector>=3.0.0",
+  "databricks-sdk>=0.40.0",
   "cffi>=1.16.0",
 ]
 
@@ -28,3 +29,17 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["what_if_app*"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-timeout>=2.3",
+]
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: live Databricks + MLflow (needs ~/.databrickscfg or .env)",
+  "slow: optional live MLflow load; set RUN_LIVE_DATABRICKS_MLFLOW=1",
+]
+# Default cap for fast integration tests; slow tests override with @pytest.mark.timeout(...)
+timeout = 120

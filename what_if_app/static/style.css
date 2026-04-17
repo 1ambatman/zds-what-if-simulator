@@ -465,11 +465,73 @@ textarea {
   overflow: hidden;
 }
 
-.shap-list .bar > i {
+.shap-list .bar .shap-bar-fill {
   display: block;
   height: 100%;
   border-radius: 3px;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
+}
+
+.waterfall-wrap {
+  margin: 0.35rem 0 0.75rem;
+  width: 100%;
+  overflow-x: auto;
+}
+
+.waterfall-svg {
+  display: block;
+  width: 100%;
+  max-width: 820px;
+  height: auto;
+}
+
+.waterfall-svg.wf-horizontal {
+  min-height: 200px;
+}
+
+.waterfall-legend {
+  margin: 0.4rem 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  line-height: 1.45;
+}
+
+.waterfall-legend a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.waterfall-legend a:hover {
+  text-decoration: underline;
+}
+
+.wf-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin: 0 0.2rem 0 0.5rem;
+  vertical-align: middle;
+}
+
+.wf-dot:first-child {
+  margin-left: 0;
+}
+
+/* Match shap.plots.waterfall: positive → red, negative → blue */
+.wf-pos {
+  background: #ff0052;
+}
+
+.wf-neg {
+  background: #008bfb;
+}
+
+.waterfall-empty {
+  margin: 0.35rem 0;
+  font-size: 0.8rem;
+  color: var(--muted);
 }
 
 .delta-table {

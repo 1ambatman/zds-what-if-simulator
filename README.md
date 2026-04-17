@@ -6,7 +6,7 @@ Local web app that reproduces the **what_if_simulator** notebook: load customer 
 
 - Python 3.10+
 - Network access to your Databricks workspace (SQL warehouse + MLflow)
-- A personal access token with permission to run SQL on the warehouse and read the MLflow run artifact
+- Either **`databricks auth login`** (OAuth) or a **personal access token** with permission to use the SQL warehouse and read the MLflow run artifact
 
 ## Setup
 
@@ -27,10 +27,10 @@ pip install --force-reinstall 'cffi>=1.16.0' cryptography
 Edit `.env`:
 
 - **DATABRICKS_HOST** — workspace URL, e.g. `https://adb-xxxx.azuredatabricks.net`
-- **DATABRICKS_HTTP_PATH** — SQL warehouse HTTP path, e.g. `/sql/1.0/warehouses/xxxxxxxx`
-- **DATABRICKS_TOKEN** — personal access token
-- **MLFLOW_TRACKING_URI** — usually `databricks` (uses Databricks-hosted MLflow; ensure your CLI/profile or token is configured per [MLflow on Databricks](https://docs.databricks.com/mlflow/index.html))
-- **PREDICTIONS_TABLE** / **MLFLOW_RUN_ID** — defaults match the notebook; override as needed
+- **DATABRICKS_HTTP_PATH** — SQL warehouse HTTP path, e.g. `/sql/1.0/warehouses/xxxxxxxx` (or set **DATABRICKS_WAREHOUSE_ID** instead)
+- **DATABRICKS_TOKEN** — personal access token (omit if you use **`databricks auth login`** / OAuth; then SQL goes through the Databricks SDK and you must set **DATABRICKS_WAREHOUSE_ID** or **DATABRICKS_HTTP_PATH** with a real warehouse id). If you still have an **old PAT** in `.env` but want OAuth, set **DATABRICKS_OAUTH_ONLY=true** or delete the token line — otherwise MLflow can return **403 Invalid access token**
+- **MLFLOW_TRACKING_URI** / **registry** — with a PAT, defaults `databricks` / `databricks-uc` are fine. **Without** a PAT (`databricks auth login` only), the app sets `databricks://…` and `databricks-uc://…` with your config profile (default `DEFAULT`) so MLflow uses the same SDK/CLI auth as the AI dev kit
+- **PREDICTIONS_TABLE** / **MLFLOW_RUN_ID** — defaults match the notebook; override as needed. **MLFLOW_MODEL_ARTIFACT_PATH** defaults to **`auto`** (finds the folder that contains `MLmodel`). Override with an explicit path if needed, or use **MLFLOW_MODEL_URI** (`models:/catalog.schema.name/1`) / **LOCAL_MODEL_PATH**
 - **LOCAL_MODEL_PATH** (optional) — path to an exported MLflow LightGBM model directory to skip loading from a run
 
 ## Run
@@ -39,7 +39,9 @@ Edit `.env`:
 python run.py
 ```
 
-The app starts at `http://127.0.0.1:8765` and opens your default browser.
+The app starts at `http://127.0.0.1:8765` and opens your default browser. The HTTP server comes up immediately; the LightGBM model loads in the background from MLflow (the UI shows **Loading model…** until that finishes). If artifact downloads fail repeatedly (e.g. TLS/proxy), set **LOCAL_MODEL_PATH** to a folder you exported from MLflow.
+
+To confirm the app can reach your SQL warehouse (after configuring `.env` or a profile), open `http://127.0.0.1:8765/api/databricks-health` — you should see `{"ok": true, ...}`.
 
 Alternatively:
 

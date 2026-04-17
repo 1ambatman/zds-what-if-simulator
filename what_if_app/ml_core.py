@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import shutil
+from collections import deque
 from typing import Any
 
 import lightgbm as lgb
@@ -17,16 +20,131 @@ _booster: lgb.Booster | None = None
 _explainer: shap.TreeExplainer | None = None
 V1_FEATURES: list[str] = []
 
+_logger = logging.getLogger(__name__)
+
+
+def discover_mlflow_model_subpath(run_id: str) -> str | None:
+    """
+    Find the run-relative directory that contains MLmodel.
+
+    MlflowClient.list_artifacts(run_id) uses the raw backing store and omits MLflow 3 "logged
+    model" layouts. We use RunsArtifactRepository via runs:/<run_id> (same as download) and BFS.
+    Logged models often live under path "model" but may not appear in a root listing, so we seed
+    the queue with "model".
+    """
+    from mlflow.tracking.artifact_utils import get_artifact_repository
+
+    tracking = mlflow.get_tracking_uri()
+    registry = mlflow.get_registry_uri()
+    repo = get_artifact_repository(
+        artifact_uri=f"runs:/{run_id}",
+        tracking_uri=tracking,
+        registry_uri=registry,
+    )
+    parents: list[str] = []
+    seen: set[str | None] = set()
+    q: deque[str | None] = deque([None, "model"])
+    while q:
+        prefix = q.popleft()
+        if prefix in seen:
+            continue
+        seen.add(prefix)
+        try:
+            arts = repo.list_artifacts(prefix)
+        except Exception:
+            continue
+        for fi in arts:
+            p = fi.path.replace("\\", "/")
+            if fi.is_dir:
+                if p not in seen:
+                    q.append(p)
+            elif p.split("/")[-1] == "MLmodel":
+                parents.append(p.rsplit("/", 1)[0])
+
+    if not parents:
+        return None
+    parents.sort(key=lambda s: (len(s.split("/")), len(s)))
+    return parents[0]
+
+
+def _runs_model_uri(run_id: str, subpath: str) -> str:
+    sub = subpath.strip().strip("/")
+    return f"runs:/{run_id}/{sub}" if sub else f"runs:/{run_id}"
+
+
+def _resolve_mlflow_tracking_and_registry_uris() -> tuple[str, str]:
+    """
+    PAT mode: use MLFLOW_TRACKING_URI / MLFLOW_REGISTRY_URI from settings (default databricks / databricks-uc).
+
+    OAuth / databricks-cli (no DATABRICKS_TOKEN): use databricks://<profile> and databricks-uc://<profile>
+    so MLflow authenticates via the Databricks SDK (same as AI dev kit), not raw tokens.
+    """
+    tracking = (settings.mlflow_tracking_uri or "databricks").strip()
+    registry = (settings.mlflow_registry_uri or "databricks-uc").strip()
+    if (settings.local_model_path or "").strip():
+        return tracking, registry
+    if settings.uses_databricks_pat():
+        return tracking, registry
+    from mlflow.utils.uri import construct_db_uc_uri_from_profile
+
+    profile = (settings.databricks_config_profile or "DEFAULT").strip()
+    uc = construct_db_uc_uri_from_profile(profile)
+    return f"databricks://{profile}", uc if uc else "databricks-uc"
+
 
 def load_model_from_mlflow() -> tuple[lgb.Booster, shap.TreeExplainer]:
-    mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-    mlflow.set_registry_uri(settings.mlflow_registry_uri)
+    t_uri, r_uri = _resolve_mlflow_tracking_and_registry_uris()
+    mlflow.set_tracking_uri(t_uri)
+    mlflow.set_registry_uri(r_uri)
     mlflow.lightgbm.autolog(disable=True)
     if settings.local_model_path:
         booster = mlflow.lightgbm.load_model(settings.local_model_path)
     else:
+        uri = (settings.mlflow_model_uri or "").strip()
         rid = settings.mlflow_run_id.strip()
-        booster = mlflow.lightgbm.load_model(f"runs:/{rid}/model")
+        sub: str | None = None
+        if not uri:
+            raw = (settings.mlflow_model_artifact_path or "auto").strip().strip("/")
+            if raw.lower() == "auto":
+                sub = discover_mlflow_model_subpath(rid)
+                if not sub:
+                    raise mlflow.exceptions.MlflowException(
+                        f"No MLmodel file found under run {rid!r} via list_artifacts. "
+                        "Set MLFLOW_MODEL_ARTIFACT_PATH to the folder path shown in the MLflow UI, "
+                        "or MLFLOW_MODEL_URI / LOCAL_MODEL_PATH."
+                    )
+            else:
+                sub = raw
+            uri = _runs_model_uri(rid, sub)
+
+        # Avoid MLflow's fallback to Azure blob presigned URLs (often SSLEOF on VPN/proxy): fetch
+        # the run artifact tree via Databricks Files API (same host as the workspace) first.
+        if not (settings.mlflow_model_uri or "").strip() and sub:
+            try:
+                from what_if_app.databricks_io import download_run_artifact_dir_via_workspace_files
+
+                tmp = download_run_artifact_dir_via_workspace_files(rid, sub, t_uri)
+                if tmp is not None:
+                    try:
+                        booster = mlflow.lightgbm.load_model(tmp)
+                    finally:
+                        shutil.rmtree(tmp, ignore_errors=True)
+                    explainer = shap.TreeExplainer(booster)
+                    return booster, explainer
+            except Exception as e:
+                _logger.warning(
+                    "Workspace Files API download failed (%s); falling back to MLflow URI download.",
+                    e,
+                )
+
+        try:
+            booster = mlflow.lightgbm.load_model(uri)
+        except mlflow.exceptions.MlflowException as e:
+            raise mlflow.exceptions.MlflowException(
+                f"{e.message} | Tried URI {uri!r}. Set MLFLOW_MODEL_ARTIFACT_PATH to the artifact "
+                "folder containing MLmodel (or use auto), MLFLOW_MODEL_URI for registry, or "
+                "LOCAL_MODEL_PATH if downloads fail (TLS/network)."
+            ) from e
     explainer = shap.TreeExplainer(booster)
     return booster, explainer
 
