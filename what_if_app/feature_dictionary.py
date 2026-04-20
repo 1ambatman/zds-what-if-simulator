@@ -23,3 +23,18 @@ def get_feature_descriptions() -> dict[str, str]:
             if feat:
                 out[feat] = desc
     return out
+
+
+def description_for_feature(name: str) -> str:
+    """Resolve description for a model feature name (exact or case-insensitive match)."""
+    raw = (name or "").strip()
+    if not raw:
+        return ""
+    m = get_feature_descriptions()
+    if raw in m:
+        return (m[raw] or "").strip()
+    low = raw.lower()
+    for k, v in m.items():
+        if k.lower() == low:
+            return (v or "").strip()
+    return ""

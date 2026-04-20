@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from what_if_app import ml_core
 from what_if_app.config import settings
 from what_if_app.databricks_io import fetch_customer_pairs_from_input_table, fetch_profiles_from_predictions_table, parse_prediction_json
-from what_if_app.feature_dictionary import get_feature_descriptions
+from what_if_app.feature_dictionary import description_for_feature, get_feature_descriptions
 from what_if_app.ml_core import PRESET_SCENARIOS, get_booster, init_runtime, load_model_from_mlflow
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -317,10 +317,12 @@ def profile_features(profile_id: str) -> dict[str, Any]:
                 max_val = 10.0
             is_pct = "pct" in feat
             step = 0.01 if is_pct else max(0.01, max_val / 200)
+            desc = description_for_feature(feat)
             sliders.append(
                 {
                     "name": feat,
                     "label": feat.replace("_lag1d", "").replace("_", " ")[:44],
+                    "description": desc,
                     "value": val,
                     "min": 0.0,
                     "max": 1.0 if is_pct else max_val,

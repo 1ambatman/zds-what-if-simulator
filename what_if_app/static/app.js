@@ -370,7 +370,8 @@ function renderWaterfallSvg(baseValue, score, rows) {
     const wbar = Math.max(Math.abs(x2 - x1), 2);
     const top = yMid(row) - 8;
     const col = steps[i].shap >= 0 ? posFill : negFill;
-    svg += `<rect x="${left}" y="${top}" width="${wbar}" height="16" fill="${col}" fill-opacity="0.92" rx="2"/>`;
+    const barTip = svgEscape(featureHoverTitle(steps[i].feature));
+    svg += `<rect x="${left}" y="${top}" width="${wbar}" height="16" fill="${col}" fill-opacity="0.92" rx="2"><title>${barTip}</title></rect>`;
   }
 
   svg += `<line x1="${xScale(cum[0])}" y1="${yMid(n + 1)}" x2="${xScale(cum[0])}" y2="${yMid(1)}" stroke="${connStroke}" stroke-width="1.5"/>`;
@@ -421,7 +422,7 @@ function renderWaterfallSvg(baseValue, score, rows) {
       <p class="waterfall-legend">
         <span class="wf-dot wf-pos"></span> positive φ (higher output)
         <span class="wf-dot wf-neg"></span> negative φ (lower output)
-        · same layout as
+        · Hover a colored bar or feature name for what each input measures · same layout as
         <a href="https://shap.readthedocs.io/en/latest/example_notebooks/api_examples/plots/waterfall.html" target="_blank" rel="noopener noreferrer">shap.plots.waterfall</a>
       </p>
     </div>`;
@@ -456,13 +457,32 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function lookupFeatureDescription(featureName) {
+  const name = featureName != null ? String(featureName).trim() : "";
+  if (!name) {
+    return "";
+  }
+  const direct = featureDescriptions[name];
+  if (direct && String(direct).trim()) {
+    return String(direct).trim();
+  }
+  const lower = name.toLowerCase();
+  for (const [k, v] of Object.entries(featureDescriptions)) {
+    if (k.toLowerCase() === lower && v && String(v).trim()) {
+      return String(v).trim();
+    }
+  }
+  return "";
+}
+
+/** Plain-English first, then technical column name (for native tooltips and SVG &lt;title&gt;). */
 function featureHoverTitle(featureName) {
   const name = featureName != null ? String(featureName) : "";
-  const desc = featureDescriptions[name];
-  if (desc && String(desc).trim()) {
-    return `${name} — ${String(desc).trim()}`;
+  const desc = lookupFeatureDescription(name);
+  if (desc) {
+    return `${desc} — (${name})`;
   }
-  return name;
+  return name || "Unknown feature";
 }
 
 /** Escape for double-quoted HTML attributes (e.g. title="…"). */
@@ -523,6 +543,7 @@ function renderCompare(data) {
     ${
       rows.length
         ? `<div class="card"><h3>Top feature deltas</h3>
+      <p class="table-hint">Hover a feature name for what it measures. Values are model inputs.</p>
       <div class="delta-table-wrap">
       <table class="delta-table">
         <thead><tr>
@@ -574,11 +595,20 @@ async function loadManualSliders(profileId) {
       const row = document.createElement("div");
       row.className = "slider-row";
       const id = `sf-${s.name.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      const desc = s.description && String(s.description).trim();
+      const tip = featureHoverTitle(s.name);
       row.innerHTML = `
-        <label for="${id}" title="${escapeHtmlAttr(featureHoverTitle(s.name))}"><span>${escapeHtml(s.label)}</span><span>${s.value.toFixed(3)}</span></label>
+        <label for="${id}"><span class="feat-label-text">${escapeHtml(s.label)}</span><span>${s.value.toFixed(3)}</span></label>
+        ${desc ? `<p class="feat-hint">${escapeHtml(desc)}</p>` : ""}
         <input id="${id}" type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.value}" />
       `;
+      row.title = tip;
       const input = row.querySelector("input");
+      input.title = tip;
+      input.setAttribute(
+        "aria-label",
+        desc ? `${s.label}. ${desc}` : `${s.label}. ${tip}`,
+      );
       const lbl = row.querySelector("label span:last-child");
       input.addEventListener("input", () => {
         const v = parseFloat(input.value);
