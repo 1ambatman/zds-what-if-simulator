@@ -10,13 +10,26 @@ echo.
 
 cd /d "%~dp0"
 
-:: ── 1. Create .env if missing ─────────────────────────────────────────────────
+:: ── 1. Check Databricks CLI auth ──────────────────────────────────────────────
+if not exist "%USERPROFILE%\.databrickscfg" (
+    echo [ERROR] Databricks CLI is not set up.
+    echo.
+    echo   Run this command in a terminal first, then relaunch:
+    echo.
+    echo     databricks auth login
+    echo.
+    pause
+    exit /b 1
+)
+echo [OK] Databricks auth found
+
+:: ── 2. Create .env if missing ─────────────────────────────────────────────────
 if not exist ".env" (
     echo Creating .env with defaults...
     (
         echo DATABRICKS_HOST=https://adb-3834014070274745.5.azuredatabricks.net
         echo DATABRICKS_WAREHOUSE_ID=22f5ad0176ccc8df
-        echo DATABRICKS_TOKEN=
+        echo DATABRICKS_OAUTH_ONLY=true
         echo MLFLOW_TRACKING_URI=databricks
         echo PREDICTIONS_TABLE=mle.batch_model_inference.predictions
         echo MLFLOW_RUN_ID=9d740e9e5f544d9490100cef238bf074
@@ -24,29 +37,15 @@ if not exist ".env" (
     echo [OK] .env created
 )
 
-:: ── 2. Prompt for token if not set ────────────────────────────────────────────
-set "TOKEN="
-for /f "tokens=2 delims==" %%A in ('findstr /b "DATABRICKS_TOKEN=" .env 2^>nul') do set TOKEN=%%A
-set TOKEN=!TOKEN: =!
-if "!TOKEN!"=="" (
-    echo.
-    echo Your Databricks personal access token is needed ^(one-time setup^).
-    echo.
-    echo   Go to: Settings -^> Developer -^> Access tokens -^> Generate new token
-    echo.
-    set /p TOKEN="  Paste your token here and press Enter: "
-    set TOKEN=!TOKEN: =!
-    if "!TOKEN!"=="" (
-        echo [ERROR] No token entered. Please run this launcher again.
-        pause
-        exit /b 1
-    )
-    powershell -Command "(Get-Content .env) -replace '^DATABRICKS_TOKEN=.*','DATABRICKS_TOKEN=!TOKEN!' | Set-Content .env"
-    echo [OK] Token saved to .env
-    echo.
-)
+:: ── 3. Mount .databrickscfg into the container ────────────────────────────────
+(
+    echo services:
+    echo   app:
+    echo     volumes:
+    echo       - %USERPROFILE%\.databrickscfg:/root/.databrickscfg:ro
+) > docker-compose.override.yml
 
-:: ── 3. Check Docker ───────────────────────────────────────────────────────────
+:: ── 4. Check Docker ───────────────────────────────────────────────────────────
 docker --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Docker Desktop is not installed.
@@ -58,7 +57,7 @@ if errorlevel 1 (
 )
 echo [OK] Docker found
 
-:: ── 4. Start Docker daemon if not running ─────────────────────────────────────
+:: ── 5. Start Docker daemon if not running ─────────────────────────────────────
 docker info >nul 2>&1
 if errorlevel 1 (
     echo Docker Desktop is not running. Starting it...
@@ -75,15 +74,15 @@ if errorlevel 1 (
 :docker_ready
 echo [OK] Docker is running
 
-:: ── 5. Pull latest image ──────────────────────────────────────────────────────
+:: ── 6. Pull latest image ──────────────────────────────────────────────────────
 echo Pulling latest image ^(first run may take a few minutes^)...
 docker compose pull
 
-:: ── 6. Start container ────────────────────────────────────────────────────────
+:: ── 7. Start container ────────────────────────────────────────────────────────
 echo Starting app...
 docker compose up -d
 
-:: ── 7. Wait for health check ──────────────────────────────────────────────────
+:: ── 8. Wait for health check ──────────────────────────────────────────────────
 echo Waiting for app to be ready...
 for /L %%i in (1,1,30) do (
     timeout /t 2 /nobreak >nul
