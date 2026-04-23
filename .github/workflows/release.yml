@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v*.*.*"
 
 env:
   REGISTRY: ghcr.io
@@ -13,14 +13,14 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # create GitHub Releases
-      packages: write   # push to ghcr.io
+      contents: write
+      packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (multi-platform builds)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -43,7 +43,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      - name: Build and push image (amd64 + arm64)
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -54,7 +54,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ── Build the user-facing release zip ─────────────────────────────────
       - name: Assemble release zip
         env:
           TAG: ${{ github.ref_name }}
@@ -64,50 +63,13 @@ jobs:
           IMG="ghcr.io/${REPO}:${TAG}"
           mkdir -p dist
 
-          # docker-compose.yml pinned to this exact release tag
-          cat > dist/docker-compose.yml << YAML
-services:
-  app:
-    image: ${IMG}
-    ports:
-      - "8765:8765"
-    environment:
-      APP_HOST: "0.0.0.0"
-    volumes:
-      - ./.env:/app/.env:ro
-    restart: unless-stopped
-YAML
+          sed "s|IMAGE_PLACEHOLDER|${IMG}|g" docker-compose.release.yml > dist/docker-compose.yml
 
           cp launch.command dist/
           cp launch.bat     dist/
           cp .env.example   dist/
-
+          cp README-quickstart.md dist/README.md
           chmod +x dist/launch.command
-
-          # Compact quickstart README for the zip
-          cat > dist/README.md << 'MD'
-# ZDS What If Simulator — Quick Start
-
-## Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
-
-## Setup (one time)
-1. Rename `.env.example` → `.env`
-2. Open `.env` in any text editor and fill in:
-   - `DATABRICKS_HOST` — your workspace URL
-   - `DATABRICKS_WAREHOUSE_ID` — SQL warehouse ID (from Compute → SQL Warehouses)
-   - `DATABRICKS_TOKEN` — personal access token (Settings → Developer → Access Tokens)
-   - `MLFLOW_RUN_ID` — the MLflow run ID of the model you want to load
-
-## Run
-- **Mac:** double-click `launch.command`
-- **Windows:** double-click `launch.bat`
-
-The app opens automatically in your browser at **http://localhost:8765**.
-
-## Stop
-Run `docker compose down` in this folder, or quit Docker Desktop.
-MD
 
           ZIP="zds-what-if-simulator-${TAG}.zip"
           cd dist && zip -r "../${ZIP}" . && cd ..
@@ -118,14 +80,4 @@ MD
         with:
           generate_release_notes: true
           files: ${{ env.ZIP }}
-          body: |
-            ## How to install
-
-            1. Install **[Docker Desktop](https://www.docker.com/products/docker-desktop/)** (one-time)
-            2. Download **`${{ env.ZIP }}`** below and extract it anywhere
-            3. Rename `.env.example` → `.env` and fill in your Databricks credentials
-            4. **Mac:** double-click `launch.command` · **Windows:** double-click `launch.bat`
-
-            The app opens automatically at **http://localhost:8765**.
-
-            To stop: run `docker compose down` in the extracted folder, or quit Docker Desktop.
+          body: "Download the zip, rename `.env.example` to `.env`, fill in your Databricks credentials, then double-click `launch.command` (Mac) or `launch.bat` (Windows). Full instructions are inside the zip in `README.md`."
