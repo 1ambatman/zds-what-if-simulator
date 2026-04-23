@@ -9,7 +9,7 @@ Local web app that reproduces the **what_if_simulator** notebook: load customer 
 1. Go to **[Releases](https://github.com/1ambatman/zds-what-if-simulator/releases/latest)** and download the `.zip`
 2. Extract it anywhere on your Mac or PC
 3. Rename `.env.example` → `.env` and fill in your Databricks credentials (see `.env.example` for instructions)
-4. **Mac:** double-click `launch.command` · **Windows:** double-click `launch.bat`
+4. **Mac:** right-click `launch.command` → **Open** → **Open** (first run only; Gatekeeper prompt) · **Windows:** double-click `launch.bat`
 
 The app opens automatically at **http://localhost:8765**. To stop, run `docker compose down` in the folder or quit Docker Desktop.
 

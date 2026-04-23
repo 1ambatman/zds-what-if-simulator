@@ -15,8 +15,12 @@
 
 ## Run
 
-- **Mac:** double-click `launch.command`
-- **Windows:** double-click `launch.bat`
+**Mac:**
+1. **Right-click** `launch.command` → click **Open**
+2. In the security dialog that appears, click **Open** again
+3. *(First run only — after this, double-click works normally)*
+
+**Windows:** double-click `launch.bat`
 
 The app opens automatically in your browser at **http://localhost:8765**.
 

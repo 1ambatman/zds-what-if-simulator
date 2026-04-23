@@ -80,4 +80,4 @@ jobs:
         with:
           generate_release_notes: true
           files: ${{ env.ZIP }}
-          body: "Download the zip, rename `.env.example` to `.env`, fill in your Databricks credentials, then double-click `launch.command` (Mac) or `launch.bat` (Windows). Full instructions are inside the zip in `README.md`."
+          body: "Download the zip, rename `.env.example` to `.env`, fill in your Databricks credentials, then **right-click `launch.command` → Open → Open** (Mac, first run only — Gatekeeper prompt) or double-click `launch.bat` (Windows). Full instructions inside the zip in `README.md`."
