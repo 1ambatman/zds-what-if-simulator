@@ -2,6 +2,21 @@
 
 Local web app that reproduces the **what_if_simulator** notebook: load customer feature rows from a Databricks Unity Catalog predictions table, score with a **LightGBM** model from **MLflow**, and explore **SHAP**-driven what-if scenarios.
 
+## Quick install (no terminal needed)
+
+> **Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/)**
+
+1. Go to **[Releases](https://github.com/1ambatman/zds-what-if-simulator/releases/latest)** and download the `.zip`
+2. Extract it anywhere on your Mac or PC
+3. Rename `.env.example` → `.env` and fill in your Databricks credentials (see `.env.example` for instructions)
+4. **Mac:** double-click `launch.command` · **Windows:** double-click `launch.bat`
+
+The app opens automatically at **http://localhost:8765**. To stop, run `docker compose down` in the folder or quit Docker Desktop.
+
+---
+
+## Developer setup (Python, no Docker)
+
 ## Repository
 
 - **GitHub:** [github.com/1ambatman/zds-what-if-simulator](https://github.com/1ambatman/zds-what-if-simulator)

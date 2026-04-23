@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.git/
+.github/
+.claude/
+mlflow.db
+mlartifacts/
+tests/
+*.log
+.DS_Store

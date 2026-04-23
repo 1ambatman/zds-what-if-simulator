@@ -1,0 +1,10 @@
+services:
+  app:
+    image: ghcr.io/1ambatman/zds-what-if-simulator:latest
+    ports:
+      - "8765:8765"
+    environment:
+      APP_HOST: "0.0.0.0"
+    volumes:
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
