@@ -299,9 +299,18 @@ function formatFeatVal(v) {
   return x.toFixed(4);
 }
 
+function waterfallBarTip(st) {
+  const name = st.feature != null ? String(st.feature) : "?";
+  const desc = featureHoverTitle(name);
+  const valLine = st.value != null && Number.isFinite(Number(st.value)) ? `\nValue: ${formatFeatVal(st.value)}` : "";
+  const phi = st.shap;
+  const sign = phi >= 0 ? "+" : "";
+  return `${desc}${valLine}\nSHAP φ: ${sign}${phi.toFixed(4)}`;
+}
+
 /**
  * Horizontal SHAP waterfall: model output on X, one row per feature, E[f(x)] at bottom and f(x) at top
- * (same idea as shap.plots.waterfall — see https://shap.readthedocs.io/en/latest/example_notebooks/api_examples/plots/waterfall.html).
+ * (same idea as shap.plots.waterfall). Feature **values** are in the side table so the plot stays readable.
  */
 function renderWaterfallSvg(baseValue, score, rows) {
   const base = Number(baseValue);
@@ -316,13 +325,14 @@ function renderWaterfallSvg(baseValue, score, rows) {
   }
 
   const rowH = 46;
-  const padL = 372;
+  const padL = 56;
   const padR = 28;
-  const padT = 14;
+  /* Top padding lines up chart rows with the side table (caption + first row). */
+  const padT = 38;
   const padB = 42;
   const numRows = n + 2;
   const H = padT + numRows * rowH + padB;
-  const W = 960;
+  const W = 920;
   const plotW = W - padL - padR;
 
   let xmin = Math.min(...cum, sc);
@@ -370,8 +380,8 @@ function renderWaterfallSvg(baseValue, score, rows) {
     const wbar = Math.max(Math.abs(x2 - x1), 2);
     const top = yMid(row) - 8;
     const col = steps[i].shap >= 0 ? posFill : negFill;
-    const barTip = svgEscape(featureHoverTitle(steps[i].feature));
-    svg += `<rect x="${left}" y="${top}" width="${wbar}" height="16" fill="${col}" fill-opacity="0.92" rx="2"><title>${barTip}</title></rect>`;
+    const tip = encodeDataTip(waterfallBarTip(steps[i]));
+    svg += `<g data-tip="${tip}" style="cursor:default"><rect x="${left}" y="${top}" width="${wbar}" height="16" fill="${col}" fill-opacity="0.92" rx="2"/></g>`;
   }
 
   svg += `<line x1="${xScale(cum[0])}" y1="${yMid(n + 1)}" x2="${xScale(cum[0])}" y2="${yMid(1)}" stroke="${connStroke}" stroke-width="1.5"/>`;
@@ -390,19 +400,8 @@ function renderWaterfallSvg(baseValue, score, rows) {
     const phi = steps[i].shap;
     const sign = phi >= 0 ? "+" : "";
     const tx = left + wbar / 2;
-    svg += `<text class="wf-svg-phi" x="${tx}" y="${yMid(row) + 5}" text-anchor="middle">${svgEscape(sign + phi.toFixed(4))}</text>`;
+    svg += `<text class="wf-svg-phi" x="${tx}" y="${yMid(row) + 5}" text-anchor="middle" pointer-events="none">${svgEscape(sign + phi.toFixed(4))}</text>`;
   }
-
-  svg += `<text class="wf-svg-title" x="12" y="${yMid(0) + 5}">${svgEscape(`f(x) = ${sc.toFixed(4)}`)}</text>`;
-  for (let i = 0; i < n; i++) {
-    const row = 1 + i;
-    const st = steps[i];
-    svg += `<g><title>${svgEscape(featureHoverTitle(st.feature))}</title>
-      <text class="wf-feat-val" x="12" y="${yMid(row) - 10}">${svgEscape(`${formatFeatVal(st.value)} =`)}</text>
-      <text class="wf-feat-name" x="12" y="${yMid(row) + 14}">${svgEscape(shortWaterfallFeat(st.feature))}</text>
-    </g>`;
-  }
-  svg += `<text class="wf-svg-title" x="12" y="${yMid(n + 1) + 5}">${svgEscape(`E[f(x)] = ${base.toFixed(4)}`)}</text>`;
 
   let xTickStr = "";
   for (const tv of tickVals) {
@@ -413,19 +412,133 @@ function renderWaterfallSvg(baseValue, score, rows) {
     xTickStr += `<text class="wf-svg-tick" x="${xs}" y="${H - 14}" text-anchor="middle">${svgEscape(String(Number(tv.toFixed(5))))}</text>`;
   }
 
+  const tipFx = encodeDataTip(`Model output f(x)\nScore shown on the x-axis: ${sc.toFixed(4)}`);
+  const tipBase = encodeDataTip(`Expected value E[f(x)]\nBaseline from the explainer: ${base.toFixed(4)}`);
+
+  let tableBody = "";
+  tableBody += `<tr class="wf-side-muted" style="height:${rowH}px" data-tip="${tipFx}"><th scope="row">f(x) model output</th><td class="num">${sc.toFixed(4)}</td></tr>`;
+  for (let i = 0; i < n; i++) {
+    const st = steps[i];
+    const tip = encodeDataTip(waterfallBarTip(st));
+    tableBody += `<tr style="height:${rowH}px" data-tip="${tip}"><th scope="row">${escapeHtml(shortWaterfallFeat(st.feature))}</th><td class="num">${escapeHtml(formatFeatVal(st.value))}</td></tr>`;
+  }
+  tableBody += `<tr class="wf-side-muted" style="height:${rowH}px" data-tip="${tipBase}"><th scope="row">E[f(x)] expected value</th><td class="num">${base.toFixed(4)}</td></tr>`;
+
   return `
     <div class="waterfall-wrap wf-shap" role="img" aria-label="SHAP waterfall plot: expected value plus per-feature contributions to model output">
-      <svg xmlns="http://www.w3.org/2000/svg" class="waterfall-svg wf-horizontal" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
-        ${svg}
-        ${xTickStr}
-      </svg>
+      <div class="wf-split">
+        <div class="wf-side-table-wrap">
+          <div class="wf-side-caption"><span>Feature</span><span class="num">Value</span></div>
+          <table class="wf-side-table">
+            <tbody>${tableBody}</tbody>
+          </table>
+        </div>
+        <div class="wf-plot-wrap">
+          <svg xmlns="http://www.w3.org/2000/svg" class="waterfall-svg wf-horizontal" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+            ${svg}
+            ${xTickStr}
+          </svg>
+        </div>
+      </div>
       <p class="waterfall-legend">
         <span class="wf-dot wf-pos"></span> positive φ (higher output)
         <span class="wf-dot wf-neg"></span> negative φ (lower output)
-        · Hover a colored bar or feature name for what each input measures · same layout as
+        · Values are in the table; hover a row or bar for definitions · same idea as
         <a href="https://shap.readthedocs.io/en/latest/example_notebooks/api_examples/plots/waterfall.html" target="_blank" rel="noopener noreferrer">shap.plots.waterfall</a>
       </p>
     </div>`;
+}
+
+/** Horizontal bars: Δ SHAP per feature (largest |Δ| first). */
+function renderDeltaShapBars(rows, maxBars = 18) {
+  if (!Array.isArray(rows) || !rows.length) {
+    return "";
+  }
+  const sorted = [...rows]
+    .map((r) => ({
+      feature: r.feature != null ? String(r.feature) : "?",
+      dShap: Number(r.shap_delta),
+      dVal: Number(r.value_change),
+      before: Number(r.original_value),
+      after: Number(r.modified_value),
+    }))
+    .filter((r) => Number.isFinite(r.dShap))
+    .sort((a, b) => Math.abs(b.dShap) - Math.abs(a.dShap))
+    .slice(0, maxBars);
+
+  if (!sorted.length) {
+    return "";
+  }
+
+  const barH = 20;
+  const gap = 5;
+  const rowPitch = barH + gap;
+  const minPlotW = 400;
+  const padR = 92;
+  let maxLabelPx = 120;
+  for (const r of sorted) {
+    maxLabelPx = Math.max(maxLabelPx, approxMonoTextWidthPx(deltaChartLabel(r.feature)));
+  }
+  const labelColW = Math.min(580, Math.max(200, maxLabelPx + 24));
+  const padL = labelColW + 16;
+  const padT = 10;
+  const padB = 36;
+  const n = sorted.length;
+  const H = padT + n * rowPitch + padB;
+  const W = padL + minPlotW + padR;
+  const plotW = W - padL - padR;
+
+  const deltas = sorted.map((r) => r.dShap);
+  let minD = Math.min(0, ...deltas);
+  let maxD = Math.max(0, ...deltas);
+  const span = maxD - minD || 1;
+  minD -= span * 0.05;
+  maxD += span * 0.05;
+  const xScale = (d) => padL + ((d - minD) / (maxD - minD)) * plotW;
+  const x0 = xScale(0);
+
+  const posFill = "#ff0052";
+  const negFill = "#008bfb";
+  const gridStroke = "rgba(120, 160, 255, 0.12)";
+  const labelFill = "#c8d0f0";
+  const mutedFill = "#8b95b8";
+
+  let svg = "";
+  const tickCount = 5;
+  const tspan = maxD - minD;
+  const ticks =
+    tickCount > 1 ? Array.from({ length: tickCount }, (_, j) => minD + (j / (tickCount - 1)) * tspan) : [minD];
+  for (const tv of ticks) {
+    const xv = xScale(tv);
+    if (!Number.isFinite(xv)) {
+      continue;
+    }
+    svg += `<line x1="${xv}" y1="${padT}" x2="${xv}" y2="${H - padB}" stroke="${gridStroke}" stroke-width="1"/>`;
+    svg += `<text class="db-axis-tick" x="${xv}" y="${H - padB + 16}" text-anchor="middle" fill="${mutedFill}" font-size="11px">${svgEscape(Number(tv.toFixed(4)).toString())}</text>`;
+  }
+
+  svg += `<line x1="${x0}" y1="${padT}" x2="${x0}" y2="${H - padB}" stroke="rgba(200,210,240,0.35)" stroke-width="1.5"/>`;
+  svg += `<text class="db-x-label" x="${padL + plotW / 2}" y="${H - 10}" text-anchor="middle" fill="${mutedFill}" font-size="12px">Δ SHAP (after − before)</text>`;
+
+  for (let i = 0; i < n; i++) {
+    const yTop = padT + i * rowPitch;
+    const yMidRow = yTop + barH / 2;
+    const d = sorted[i].dShap;
+    const x1 = x0;
+    const x2 = xScale(d);
+    const left = Math.min(x1, x2);
+    const wbar = Math.max(Math.abs(x2 - x1), 3);
+    const col = d >= 0 ? posFill : negFill;
+    const lab = deltaChartLabel(sorted[i].feature);
+    const tip = encodeDataTip(
+      `${featureHoverTitle(sorted[i].feature)}\nΔ SHAP: ${d >= 0 ? "+" : ""}${d.toFixed(4)}\nValue: ${sorted[i].before.toFixed(4)} → ${sorted[i].after.toFixed(4)} (Δ ${sorted[i].dVal >= 0 ? "+" : ""}${sorted[i].dVal.toFixed(4)})`,
+    );
+    svg += `<text class="db-feat-label" x="${padL - 8}" y="${yMidRow + 4}" text-anchor="end" fill="${labelFill}" font-size="12px">${svgEscape(lab)}</text>`;
+    svg += `<g data-tip="${tip}" style="cursor:default"><rect x="${left}" y="${yTop + 2}" width="${wbar}" height="${barH - 4}" rx="3" fill="${col}" fill-opacity="0.9"/></g>`;
+    svg += `<text class="db-delta-val" x="${Math.min(x0, x2) + wbar + 6}" y="${yMidRow + 4}" fill="#eef1ff" font-size="12px" font-weight="600">${svgEscape((d >= 0 ? "+" : "") + d.toFixed(4))}</text>`;
+  }
+
+  return `<div class="delta-bars-wrap"><svg xmlns="http://www.w3.org/2000/svg" class="delta-bars-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" aria-label="Horizontal bar chart of SHAP deltas">${svg}</svg></div>`;
 }
 
 function renderBaseline(data) {
@@ -449,6 +562,16 @@ function renderBaseline(data) {
 
 function shortFeat(f) {
   return f.length > 42 ? f.slice(0, 40) + "…" : f;
+}
+
+/** Longer label for Δ SHAP chart — width computed so SVG does not clip text. */
+function deltaChartLabel(f) {
+  const s = String(f);
+  return s.length > 72 ? s.slice(0, 70) + "…" : s;
+}
+
+function approxMonoTextWidthPx(str, fontSize = 12) {
+  return Math.ceil(String(str).length * fontSize * 0.62);
 }
 
 function escapeHtml(s) {
@@ -494,11 +617,146 @@ function escapeHtmlAttr(s) {
     .replace(/>/g, "&gt;");
 }
 
+/** Custom tooltip (native `title` cannot use a readable font size). */
+function tooltipTextFromDataTip(el) {
+  const raw = el.getAttribute("data-tip");
+  if (!raw) {
+    return "";
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function encodeDataTip(s) {
+  return encodeURIComponent(String(s));
+}
+
+function positionVizTooltip(tipEl, clientX, clientY) {
+  const pad = 14;
+  const tw = tipEl.offsetWidth || 280;
+  const th = tipEl.offsetHeight || 80;
+  let x = clientX + pad;
+  let y = clientY + pad;
+  if (x + tw > window.innerWidth - 8) {
+    x = Math.max(8, clientX - tw - pad);
+  }
+  if (y + th > window.innerHeight - 8) {
+    y = Math.max(8, clientY - th - pad);
+  }
+  tipEl.style.left = `${x}px`;
+  tipEl.style.top = `${y}px`;
+}
+
+function bindVizTooltips(resultsRoot) {
+  const tip = $("#viz-tooltip");
+  if (!tip || !resultsRoot || resultsRoot.dataset.tipBound === "1") {
+    return;
+  }
+  resultsRoot.dataset.tipBound = "1";
+  let active = null;
+
+  const hide = () => {
+    active = null;
+    tip.classList.add("hidden");
+    tip.innerHTML = "";
+  };
+
+  const showFromEl = (el, clientX, clientY) => {
+    const text = tooltipTextFromDataTip(el);
+    if (!text) {
+      hide();
+      return;
+    }
+    active = el;
+    const lines = text.split("\n");
+    const title = lines[0];
+    const restLines = lines.slice(1);
+    const restHtml = restLines.map((ln) => escapeHtml(ln)).join("<br/>");
+    tip.innerHTML = restHtml
+      ? `<div class="tip-title">${escapeHtml(title)}</div><div class="tip-body">${restHtml}</div>`
+      : `<div class="tip-body">${escapeHtml(title)}</div>`;
+    tip.classList.remove("hidden");
+    positionVizTooltip(tip, clientX, clientY);
+  };
+
+  resultsRoot.addEventListener("mouseover", (e) => {
+    const el = e.target.closest("[data-tip]");
+    if (!el || !resultsRoot.contains(el)) {
+      hide();
+      return;
+    }
+    showFromEl(el, e.clientX, e.clientY);
+  });
+
+  resultsRoot.addEventListener("mousemove", (e) => {
+    if (!active) {
+      return;
+    }
+    const el = e.target.closest("[data-tip]");
+    if (el !== active) {
+      return;
+    }
+    positionVizTooltip(tip, e.clientX, e.clientY);
+  });
+
+  resultsRoot.addEventListener("mouseout", (e) => {
+    const rel = e.relatedTarget;
+    if (!rel || !resultsRoot.contains(rel)) {
+      hide();
+    }
+  });
+
+  resultsRoot.addEventListener("scroll", hide, true);
+}
+
 /** Insert HTML into a container using a &lt;template&gt; so SVG is parsed in the SVG namespace (avoids missing charts with innerHTML in some browsers). */
 function mountHtml(container, html) {
   const t = document.createElement("template");
   t.innerHTML = html.trim();
   container.replaceChildren(t.content);
+}
+
+function renderFeatureDeltasSection(rows) {
+  if (!rows.length) {
+    return "";
+  }
+  const bars = renderDeltaShapBars(rows, 18);
+  const body = rows
+    .map((r) => {
+      const tip = encodeDataTip(
+        `${featureHoverTitle(r.feature)}\nBefore: ${Number(r.original_value).toFixed(4)}  After: ${Number(r.modified_value).toFixed(4)}\nΔ value: ${Number(r.value_change).toFixed(4)}\nΔ SHAP: ${Number(r.shap_delta).toFixed(4)}`,
+      );
+      return `<tr data-tip="${tip}">
+            <td>${escapeHtml(r.feature)}</td>
+            <td>${Number(r.original_value).toFixed(4)}</td>
+            <td>${Number(r.modified_value).toFixed(4)}</td>
+            <td>${Number(r.value_change).toFixed(4)}</td>
+            <td>${Number(r.shap_delta).toFixed(4)}</td>
+          </tr>`;
+    })
+    .join("");
+  return `<div class="card delta-viz-card">
+      <h3>Feature changes</h3>
+      <p class="delta-bars-hint">Bars show <strong>Δ SHAP</strong> (after − before), longest bars first. Red pushes the score up; blue pulls it down. Hover a bar or table row for definitions and exact values.</p>
+      ${bars}
+      <h4 class="delta-table-heading">Full delta table</h4>
+      <p class="table-hint">Sorted by |Δ SHAP| (same as the notebook). Hover a row for the data dictionary blurb.</p>
+      <div class="delta-table-wrap">
+      <table class="delta-table">
+        <thead><tr>
+          <th>feature</th>
+          <th>Value before</th>
+          <th>Value after</th>
+          <th>Δ value</th>
+          <th>Δ SHAP</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+      </div>
+    </div>`;
 }
 
 function renderCompare(data) {
@@ -517,12 +775,14 @@ function renderCompare(data) {
   };
 
   const rows = data.delta_table || [];
+  const deltaSection = renderFeatureDeltasSection(rows);
+
   return `
-    <div class="card">
+    <div class="card compare-summary-card">
       <h3>${escapeHtml(data.scenario || "")}</h3>
-      <p style="font-size:0.8rem;color:var(--muted)">${escapeHtml(data.description || "")}</p>
-      <p style="font-size:0.72rem;color:var(--muted);margin:0 0 0.5rem">Tiers use your <strong>Tier definitions</strong> on the left (browser-saved).</p>
-      <div class="migration">${escapeHtml(mig)}</div>
+      <div class="migration migration-top">${escapeHtml(mig)}</div>
+      <p style="font-size:0.8rem;color:var(--muted);margin:0.85rem 0 0">${escapeHtml(data.description || "")}</p>
+      <p style="font-size:0.72rem;color:var(--muted);margin:0.35rem 0 0.5rem">Tiers use your <strong>Tier definitions</strong> on the left (browser-saved).</p>
       <div class="score-compare">
         <div class="score-bar">
           <div class="lbl">Before</div>
@@ -535,41 +795,16 @@ function renderCompare(data) {
           <div class="bar-track"><div class="bar-fill after" style="height:${hAfter}%"></div></div>
         </div>
       </div>
-      <div class="shap-grid">
-        ${block("SHAP · before", data.waterfall_before || [], data.score_before)}
-        ${block("SHAP · after", data.waterfall_after || [], data.score_after)}
-      </div>
     </div>
-    ${
-      rows.length
-        ? `<div class="card"><h3>Top feature deltas</h3>
-      <p class="table-hint">Hover a feature name for what it measures. Values are model inputs.</p>
-      <div class="delta-table-wrap">
-      <table class="delta-table">
-        <thead><tr>
-          <th>feature</th>
-          <th>Value before</th>
-          <th>Value after</th>
-          <th>Δ value</th>
-          <th>Δ SHAP</th>
-        </tr></thead>
-        <tbody>
-          ${rows
-            .map(
-              (r) => `<tr>
-            <td title="${escapeHtmlAttr(featureHoverTitle(r.feature))}">${escapeHtml(r.feature)}</td>
-            <td>${Number(r.original_value).toFixed(4)}</td>
-            <td>${Number(r.modified_value).toFixed(4)}</td>
-            <td>${Number(r.value_change).toFixed(4)}</td>
-            <td>${Number(r.shap_delta).toFixed(4)}</td>
-          </tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
-      </div></div>`
-        : ""
-    }`;
+    ${deltaSection}
+    <div class="card">
+      <h3 class="shap-detail-title">SHAP waterfalls</h3>
+      <p class="delta-bars-hint" style="margin-top:0">Per-feature contributions (φ). Feature values sit in the table beside each chart.</p>
+      <div class="shap-grid">
+        ${block("Before scenario", data.waterfall_before || [], data.score_before)}
+        ${block("After scenario", data.waterfall_after || [], data.score_after)}
+      </div>
+    </div>`;
 }
 
 async function loadManualSliders(profileId) {
@@ -602,9 +837,8 @@ async function loadManualSliders(profileId) {
         ${desc ? `<p class="feat-hint">${escapeHtml(desc)}</p>` : ""}
         <input id="${id}" type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.value}" />
       `;
-      row.title = tip;
+      row.setAttribute("data-tip", encodeDataTip(desc ? `${tip}\n${desc}` : tip));
       const input = row.querySelector("input");
-      input.title = tip;
       input.setAttribute(
         "aria-label",
         desc ? `${s.label}. ${desc}` : `${s.label}. ${tip}`,
@@ -732,6 +966,11 @@ async function init() {
       const pid = $("#profile-select").value;
       if (pid) await loadManualSliders(pid);
     }
+  }
+
+  const simPanel = document.querySelector(".panel.stretch");
+  if (simPanel) {
+    bindVizTooltips(simPanel);
   }
 
   $("#btn-run").addEventListener("click", async () => {

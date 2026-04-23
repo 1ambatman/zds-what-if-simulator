@@ -425,6 +425,10 @@ textarea {
   border: 1px solid rgba(167, 139, 250, 0.25);
 }
 
+.compare-summary-card .migration-top {
+  margin-top: 0.35rem;
+}
+
 .score-compare {
   display: flex;
   gap: 1rem;
@@ -512,6 +516,101 @@ textarea {
   height: 100%;
   border-radius: 3px;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
+}
+
+/* Side table + waterfall: feature/value readable; plot shows SHAP only */
+.wf-split {
+  display: grid;
+  grid-template-columns: minmax(220px, 34%) 1fr;
+  gap: 1rem 1.25rem;
+  align-items: start;
+  margin: 0.35rem 0 0.75rem;
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .wf-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wf-side-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(6, 10, 24, 0.5);
+}
+
+.wf-side-caption {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.45rem 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid rgba(120, 160, 255, 0.14);
+}
+
+.wf-side-caption .num {
+  color: var(--muted);
+}
+
+.wf-side-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+.wf-side-table th,
+.wf-side-table td {
+  padding: 0.35rem 0.55rem;
+  border-bottom: 1px solid rgba(120, 160, 255, 0.12);
+  vertical-align: middle;
+  line-height: 1.25;
+}
+
+.wf-side-table tr:last-child th,
+.wf-side-table tr:last-child td {
+  border-bottom: none;
+}
+
+.wf-side-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.wf-side-table td.num {
+  text-align: right;
+  white-space: nowrap;
+  color: #dbe4ff;
+  font-weight: 600;
+}
+
+.wf-side-table tr.wf-side-muted th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: none;
+}
+
+.wf-side-table tr.wf-side-muted td.num {
+  color: var(--accent);
+  font-size: 0.88rem;
+}
+
+.wf-plot-wrap {
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .waterfall-wrap {
@@ -668,6 +767,89 @@ textarea {
 .waterfall-svg text.wf-feat-name {
   fill: #eef1ff;
   font-size: 15px;
+  font-weight: 600;
+}
+
+/* Readable tooltips (native title= cannot be styled) — driven by app.js */
+.viz-tooltip {
+  position: fixed;
+  z-index: 9999;
+  max-width: min(420px, 92vw);
+  padding: 0.65rem 0.85rem;
+  font-family: var(--font);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  font-weight: 500;
+  color: var(--text);
+  background: rgba(12, 16, 36, 0.96);
+  border: 1px solid rgba(120, 160, 255, 0.35);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  transform: translate(12px, 12px);
+}
+
+.viz-tooltip.hidden {
+  display: none;
+}
+
+.viz-tooltip .tip-title {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent2);
+  margin-bottom: 0.35rem;
+  word-break: break-word;
+}
+
+.viz-tooltip .tip-body {
+  font-size: 0.95rem;
+  color: #e8ecff;
+}
+
+.delta-viz-card .delta-bars-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+
+.delta-bars-svg {
+  display: block;
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+  height: auto;
+  min-height: 120px;
+  overflow: visible;
+}
+
+.delta-bars-svg text {
+  font-family: var(--mono), ui-monospace, monospace;
+}
+
+.delta-bars-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.delta-table-heading {
+  margin: 1rem 0 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--accent2);
+}
+
+.shap-detail-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
   font-weight: 600;
 }
 
