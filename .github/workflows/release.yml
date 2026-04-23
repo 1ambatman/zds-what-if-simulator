@@ -67,7 +67,6 @@ jobs:
 
           cp launch.command dist/
           cp launch.bat     dist/
-          cp .env.example   dist/
           cp README-quickstart.md dist/README.md
           chmod +x dist/launch.command
 
