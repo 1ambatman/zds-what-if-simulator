@@ -471,6 +471,44 @@ def fetch_customer_pairs_from_input_table(input_table: str) -> list[tuple[str, s
     return [(str(df.iloc[i, 0]), str(df.iloc[i, 1])[:10]) for i in range(len(df))]
 
 
+def fetch_feature_dictionary_from_table(table: str) -> dict[str, str]:
+    """
+    Load feature descriptions from a Delta table.
+    Expected columns (tries multiple common schemas):
+      - feature_name / feature / column_name  →  description / feature_description / desc
+    """
+    # Try both possible column name pairs
+    candidates = [
+        ("feature_name", "description"),
+        ("feature_name", "feature_description"),
+        ("feature", "feature_description"),
+        ("feature", "description"),
+        ("column_name", "description"),
+        ("Feature", "Feature Description"),
+    ]
+    df = _sql_to_df(f"SELECT * FROM {table} LIMIT 2000")
+    if df is None or df.empty:
+        return {}
+    cols_lower = {c.lower(): c for c in df.columns}
+    for name_col, desc_col in candidates:
+        nc = cols_lower.get(name_col.lower())
+        dc = cols_lower.get(desc_col.lower())
+        if nc and dc:
+            out: dict[str, str] = {}
+            for _, row in df.iterrows():
+                feat = str(row[nc]).strip()
+                desc = str(row[dc]).strip() if row[dc] is not None else ""
+                if feat and feat != "nan":
+                    out[feat] = desc
+            return out
+    return {}
+
+
+def _sql_to_df(sql: str) -> pd.DataFrame:
+    """Execute SQL using the same auth path as all other queries in this module."""
+    return _execute_sql(sql)
+
+
 def parse_prediction_json(raw: Any) -> dict[str, Any]:
     if raw is None:
         return {}

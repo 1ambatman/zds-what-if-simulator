@@ -143,6 +143,7 @@ def health() -> dict[str, Any]:
         "load_elapsed_sec": elapsed,
         "load_stuck_hint": stuck_hint,
         "error": model_load_error,
+        "run_id": settings.mlflow_run_id,
     }
 
 
@@ -162,12 +163,18 @@ def databricks_health() -> dict[str, Any]:
 def meta() -> dict[str, Any]:
     fg = ml_core.build_feature_groups(ml_core.V1_FEATURES) if ml_core.V1_FEATURES else {}
     scenarios = [
-        {"name": k, "description": v["description"]}
+        {
+            "name": k,
+            "description": v["description"],
+            "category": v.get("category", ""),
+            "param_defs": v.get("param_defs", []),
+        }
         for k, v in PRESET_SCENARIOS.items()
     ]
     return {
         "predictions_table_default": settings.predictions_table,
         "mlflow_run_id_default": settings.mlflow_run_id,
+        "feature_dictionary_table_default": settings.feature_dictionary_table,
         "feature_groups": {k: v for k, v in fg.items() if v},
         "scenarios": scenarios,
         "profile_count": len(profiles_store),
@@ -175,6 +182,48 @@ def meta() -> dict[str, Any]:
         "tier_labels": {k: [float(v[0]), float(v[1])] for k, v in ml_core.TIER_LABELS.items()},
         "feature_descriptions": get_feature_descriptions(),
     }
+
+
+class ReloadModelRequest(BaseModel):
+    run_id: str
+    feature_dictionary_table: str | None = None
+
+
+@app.post("/api/reload-model")
+def reload_model(req: ReloadModelRequest) -> dict[str, Any]:
+    """Start a fresh session with a new MLflow run ID. Clears all loaded profiles."""
+    global model_load_error, model_loading, _load_generation, _model_load_started_at
+
+    run_id = req.run_id.strip()
+    if not run_id:
+        raise HTTPException(400, detail="run_id is required")
+
+    # Clear current session state
+    profiles_store.clear()
+    profile_meta.clear()
+    ml_core._booster = None
+    ml_core._explainer = None
+    ml_core.V1_FEATURES = []
+
+    # Update settings in-memory
+    settings.mlflow_run_id = run_id
+    if req.feature_dictionary_table is not None:
+        settings.feature_dictionary_table = req.feature_dictionary_table.strip()
+
+    # Reload feature descriptions for the new model / table
+    from what_if_app.feature_dictionary import reload_descriptions
+    reload_descriptions()
+
+    # Kick off new model load
+    model_load_error = None
+    model_loading = True
+    _model_load_started_at = time.monotonic()
+    _load_generation += 1
+    gen = _load_generation
+    threading.Thread(target=_background_load_model, args=(gen,), daemon=True, name=f"mlflow-reload-{gen}").start()
+    threading.Thread(target=_watchdog_load_timeout, args=(gen,), daemon=True, name=f"mlflow-reload-wd-{gen}").start()
+
+    return {"ok": True, "run_id": run_id, "message": f"Reloading model from run {run_id}. Profiles cleared."}
 
 
 class LoadRequest(BaseModel):
@@ -237,6 +286,7 @@ class WhatIfRequest(BaseModel):
     profile_id: str
     scenario: str = "(No scenario)"  # (No scenario) | Manual | preset name
     manual_features: dict[str, float] | None = None
+    scenario_params: dict[str, float] | None = None  # Override default scenario params
 
 
 @app.post("/api/what-if")
@@ -269,7 +319,14 @@ def what_if(req: WhatIfRequest) -> dict[str, Any]:
                     mod[k] = float(v)
     elif scenario_name in PRESET_SCENARIOS:
         spec = PRESET_SCENARIOS[scenario_name]
-        mod = spec["fn"](profile, **spec["params"])
+        # Merge default params with user overrides; coerce int params
+        params: dict[str, Any] = dict(spec["params"])
+        for pd_def in spec.get("param_defs", []):
+            name = pd_def["name"]
+            if req.scenario_params and name in req.scenario_params:
+                raw_v = req.scenario_params[name]
+                params[name] = int(raw_v) if pd_def.get("type") == "integer" else float(raw_v)
+        mod = spec["fn"](profile, **params)
     else:
         raise HTTPException(400, detail=f"Unknown scenario: {scenario_name}")
 
@@ -294,6 +351,37 @@ def what_if(req: WhatIfRequest) -> dict[str, Any]:
         "waterfall_after": ml_core.shap_waterfall_rows(shap_after, base, mod, n=20),
         "delta_table": delta,
     }
+
+
+class CascadeRequest(BaseModel):
+    profile_id: str
+    changed_feature: str
+    new_value: float
+    current_overrides: dict[str, float] | None = None
+    order_amount: float = 120.0
+    num_installments: int = 4
+
+
+@app.post("/api/cascade-features")
+def cascade_features_endpoint(req: CascadeRequest) -> dict[str, Any]:
+    """
+    Given a slider change in manual mode, return cascaded updates for related features.
+    Used by the UI to highlight and auto-update dependent sliders.
+    """
+    if not ml_core.is_ready():
+        raise HTTPException(503, detail=_model_unavailable_detail())
+    if req.profile_id not in profiles_store:
+        raise HTTPException(404, detail="Unknown profile_id")
+    profile = profiles_store[req.profile_id].copy()
+    # Apply current overrides before computing cascade
+    if req.current_overrides:
+        for k, v in req.current_overrides.items():
+            if k in profile.columns:
+                profile[k] = float(v)
+    old_value = float(profile[req.changed_feature].iloc[0]) if req.changed_feature in profile.columns else 0.0
+    avg_installment = req.order_amount / req.num_installments
+    cascaded = ml_core.compute_cascade(req.changed_feature, old_value, req.new_value, profile, avg_installment)
+    return {"cascaded": cascaded}
 
 
 @app.get("/api/profile-features/{profile_id}")

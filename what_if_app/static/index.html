@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/style.css?v=11" />
+    <link rel="stylesheet" href="/static/style.css?v=12" />
   </head>
   <body>
     <div class="bg-grid"></div>
@@ -30,6 +30,23 @@
 
     <main class="layout">
       <section class="panel glass">
+
+        <!-- Model configuration -->
+        <h2 class="panel-title">Model</h2>
+        <label class="field">
+          <span>MLflow Run ID</span>
+          <input type="text" id="run-id" autocomplete="off" placeholder="9d740e9e5f544d9490100cef238bf074" />
+        </label>
+        <label class="field">
+          <span>Feature dictionary table <small>(optional Delta table)</small></span>
+          <input type="text" id="feature-dict-table" autocomplete="off" placeholder="catalog.schema.feature_descriptions" />
+        </label>
+        <button type="button" id="btn-reload-model" class="btn secondary reload-btn">↺ Load model</button>
+        <p id="reload-msg" class="hint" aria-live="polite"></p>
+
+        <div class="section-divider"></div>
+
+        <!-- Databricks / profile loading -->
         <h2 class="panel-title">Databricks</h2>
         <label class="field">
           <span>Predictions table</span>
@@ -60,6 +77,9 @@
         <button type="button" id="btn-load" class="btn primary">Load profiles</button>
         <p id="load-msg" class="hint"></p>
 
+        <div class="section-divider"></div>
+
+        <!-- Tier definitions -->
         <h3 class="sub-title">Tier definitions</h3>
         <p class="hint tier-hint">Edit score bands and risk labels. Saved in this browser only. Re-run <strong>Run what-if</strong> to refresh tier text in results.</p>
         <div id="tier-boundaries-wrap" class="tier-wrap"></div>
@@ -83,12 +103,32 @@
             <select id="scenario-select"></select>
           </label>
         </div>
+
+        <!-- Scenario parameters (shown for configurable scenarios) -->
+        <div id="scenario-params-wrap" class="scenario-params hidden">
+          <div class="scenario-params-inner" id="scenario-params-inner"></div>
+        </div>
+
         <div class="row">
           <button type="button" id="btn-run" class="btn primary">Run what-if</button>
         </div>
 
         <div id="manual-wrap" class="manual-wrap hidden">
           <h3 class="sub-title">Manual features</h3>
+          <p class="hint cascade-hint">
+            <span class="cascade-dot"></span> Highlighted sliders were auto-updated because they are related to the one you moved. Hover for the reason.
+          </p>
+          <!-- Order amount inputs used for cascade calculations -->
+          <div class="cascade-params">
+            <label class="field-inline">
+              <span>Avg order ($)</span>
+              <input type="number" id="cascade-order-amount" value="120" min="1" step="1" />
+            </label>
+            <label class="field-inline">
+              <span>Installments</span>
+              <input type="number" id="cascade-num-installments" value="4" min="1" step="1" />
+            </label>
+          </div>
           <div id="manual-acc"></div>
         </div>
 
@@ -101,6 +141,6 @@
     </footer>
 
     <div id="viz-tooltip" class="viz-tooltip hidden" role="tooltip"></div>
-    <script src="/static/app.js?v=13" defer></script>
+    <script src="/static/app.js?v=12" defer></script>
   </body>
 </html>

@@ -30,18 +30,14 @@ function getTierConfig() {
   const base = tierDefaults ? cloneTier(tierDefaults) : cloneTier(FALLBACK_TIER);
   try {
     const raw = localStorage.getItem("what_if_tier_config");
-    if (!raw) {
-      return base;
-    }
+    if (!raw) return base;
     const o = JSON.parse(raw);
-    if (Array.isArray(o.boundaries) && o.boundaries.length) {
+    if (Array.isArray(o.boundaries) && o.boundaries.length)
       base.boundaries = o.boundaries.map((r) => [Number(r[0]), Number(r[1]), Number(r[2])]);
-    }
     if (o.labels && typeof o.labels === "object") {
       for (const k of Object.keys(base.labels)) {
-        if (o.labels[k] && o.labels[k].length >= 2) {
+        if (o.labels[k] && o.labels[k].length >= 2)
           base.labels[k] = [Number(o.labels[k][0]), Number(o.labels[k][1])];
-        }
       }
     }
     return base;
@@ -53,12 +49,7 @@ function getTierConfig() {
 function scoreToTierNum(score, cfg) {
   const s = Number(score);
   for (const row of cfg.boundaries) {
-    const tn = row[0];
-    const lo = row[1];
-    const hi = row[2];
-    if (s >= lo && s <= hi) {
-      return tn;
-    }
+    if (s >= row[1] && s <= row[2]) return row[0];
   }
   const last = cfg.boundaries[cfg.boundaries.length - 1];
   return last ? last[0] : 10;
@@ -67,9 +58,7 @@ function scoreToTierNum(score, cfg) {
 function scoreToLabel(score, cfg) {
   const s = Number(score);
   for (const [lab, range] of Object.entries(cfg.labels)) {
-    if (s >= range[0] && s <= range[1]) {
-      return lab;
-    }
+    if (s >= range[0] && s <= range[1]) return lab;
   }
   return "Risky";
 }
@@ -91,9 +80,7 @@ function renderTierEditors() {
   const cfg = getTierConfig();
   const bw = $("#tier-boundaries-wrap");
   const lw = $("#tier-labels-wrap");
-  if (!bw || !lw) {
-    return;
-  }
+  if (!bw || !lw) return;
   let tb = `<h4>Score bands (tier 1–10)</h4><table class="tier-table"><thead><tr><th>Tier</th><th>Low</th><th>High</th></tr></thead><tbody>`;
   for (const row of cfg.boundaries) {
     const [tn, lo, hi] = row;
@@ -118,34 +105,20 @@ function readTierConfigFromForm() {
     const tier = Number(inp.dataset.tier);
     const isHi = inp.dataset.tierBound === "hi";
     const row = cfg.boundaries.find((r) => r[0] === tier);
-    if (!row) {
-      return;
-    }
+    if (!row) return;
     const v = Number(inp.value);
-    if (!Number.isFinite(v)) {
-      return;
-    }
-    if (isHi) {
-      row[2] = v;
-    } else {
-      row[1] = v;
-    }
+    if (!Number.isFinite(v)) return;
+    if (isHi) row[2] = v;
+    else row[1] = v;
   });
   document.querySelectorAll("#tier-labels-wrap input[data-risk]").forEach((inp) => {
     const name = inp.dataset.risk;
     const end = inp.dataset.end;
-    if (!cfg.labels[name]) {
-      return;
-    }
+    if (!cfg.labels[name]) return;
     const v = Number(inp.value);
-    if (!Number.isFinite(v)) {
-      return;
-    }
-    if (end === "lo") {
-      cfg.labels[name][0] = v;
-    } else {
-      cfg.labels[name][1] = v;
-    }
+    if (!Number.isFinite(v)) return;
+    if (end === "lo") cfg.labels[name][0] = v;
+    else cfg.labels[name][1] = v;
   });
   return cfg;
 }
@@ -175,7 +148,7 @@ function setHealth(ok, err, loading, extra) {
   if (ok) {
     el.textContent = "Model ready";
     el.classList.add("pill-ok");
-    el.title = "";
+    el.title = extra?.runId ? `Run: ${extra.runId}` : "";
   } else if (loading) {
     const sec = extra?.elapsed != null ? ` (${Math.round(extra.elapsed)}s)` : "";
     el.textContent = `Loading model…${sec}`;
@@ -190,27 +163,37 @@ function setHealth(ok, err, loading, extra) {
   }
 }
 
+async function pollUntilReady(statusEl) {
+  let h = await fetch("/api/health").then((r) => r.json());
+  while (h.model_loading) {
+    setHealth(false, null, true, { elapsed: h.load_elapsed_sec, stuckHint: h.load_stuck_hint });
+    if (statusEl) statusEl.textContent = `Loading… (${Math.round(h.load_elapsed_sec || 0)}s)`;
+    await new Promise((r) => setTimeout(r, 1500));
+    h = await fetch("/api/health").then((r) => r.json());
+  }
+  setHealth(h.ok, h.error, false, { runId: h.run_id });
+  return h;
+}
+
 function parseDates(text) {
-  return text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
 
 function parseIds(text) {
-  return text
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
 
 let currentManual = {};
-/** feature name -> description from Unified RCM V1 data dictionary (`/api/meta`). */
+/** feature name -> description */
 let featureDescriptions = {};
+/** scenario name -> param_defs */
+let scenarioParamDefs = {};
 
 async function refreshMeta() {
   const meta = await api("/api/meta");
   $("#predictions-table").value = meta.predictions_table_default || "";
+  if (meta.mlflow_run_id_default) $("#run-id").value = meta.mlflow_run_id_default;
+  if (meta.feature_dictionary_table_default) $("#feature-dict-table").value = meta.feature_dictionary_table_default;
   featureDescriptions =
     meta.feature_descriptions && typeof meta.feature_descriptions === "object" ? meta.feature_descriptions : {};
   tierDefaults = {
@@ -218,14 +201,41 @@ async function refreshMeta() {
     labels: meta.tier_labels ? JSON.parse(JSON.stringify(meta.tier_labels)) : JSON.parse(JSON.stringify(FALLBACK_TIER.labels)),
   };
   renderTierEditors();
+
+  // Populate scenario selector, grouped by category
   const sel = $("#scenario-select");
   sel.innerHTML = "";
-  ["(No scenario)", ...meta.scenarios.map((s) => s.name), "Manual adjustment"].forEach((name) => {
+  const addOpt = (name) => {
     const o = document.createElement("option");
     o.value = name;
     o.textContent = name;
     sel.appendChild(o);
-  });
+  };
+  addOpt("(No scenario)");
+
+  // Group scenarios by category
+  const groups = {};
+  for (const s of meta.scenarios || []) {
+    const cat = s.category || "Other";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(s);
+    scenarioParamDefs[s.name] = s.param_defs || [];
+  }
+  const catOrder = ["Risk ↑", "Activity", "Risk ↓", "Other"];
+  for (const cat of catOrder) {
+    if (!groups[cat]?.length) continue;
+    const og = document.createElement("optgroup");
+    og.label = cat;
+    for (const s of groups[cat]) {
+      const o = document.createElement("option");
+      o.value = s.name;
+      o.textContent = s.name;
+      o.title = s.description || "";
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+  addOpt("Manual adjustment");
 }
 
 function tierColor(label) {
@@ -234,20 +244,15 @@ function tierColor(label) {
   return "var(--bad)";
 }
 
-/** Coerce API rows so SHAP math never produces NaN coordinates in the SVG. */
 function normalizeWaterfallRows(rows) {
-  if (!Array.isArray(rows)) {
-    return [];
-  }
+  if (!Array.isArray(rows)) return [];
   return rows.map((r) => {
     const shap = Number(r.shap);
     const valueRaw = r.value;
     let value = null;
     if (valueRaw != null && valueRaw !== "") {
       const v = Number(valueRaw);
-      if (Number.isFinite(v)) {
-        value = v;
-      }
+      if (Number.isFinite(v)) value = v;
     }
     return {
       feature: r.feature != null ? String(r.feature) : "?",
@@ -257,45 +262,31 @@ function normalizeWaterfallRows(rows) {
   });
 }
 
-/** Top-|SHAP| rows + remainder so cumulative matches model score (bridge-style waterfall). */
 function buildWaterfallSteps(baseValue, score, rows) {
   const norm = normalizeWaterfallRows(rows);
   const sumDisplayed = norm.reduce((s, r) => s + r.shap, 0);
   const remainder = score - baseValue - sumDisplayed;
   const steps = norm.map((r) => ({ ...r }));
-  if (Math.abs(remainder) > 1e-5) {
+  if (Math.abs(remainder) > 1e-5)
     steps.push({ feature: "Other features", shap: remainder, value: null });
-  }
   const cum = [baseValue];
-  for (const s of steps) {
-    cum.push(cum[cum.length - 1] + s.shap);
-  }
+  for (const s of steps) cum.push(cum[cum.length - 1] + s.shap);
   return { steps, cum, baseValue, score };
 }
 
 function svgEscape(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-/** Feature name only — second line in waterfall (keeps long names from overlapping the plot). */
 function shortWaterfallFeat(f) {
   const s = String(f);
   return s.length > 52 ? s.slice(0, 50) + "…" : s;
 }
 
-/** Format feature value for SHAP-style label (value = name). */
 function formatFeatVal(v) {
-  if (v == null || Number.isNaN(v)) {
-    return "—";
-  }
+  if (v == null || Number.isNaN(v)) return "—";
   const x = Number(v);
-  if (Math.abs(x) >= 1000 || (Math.abs(x) > 0 && Math.abs(x) < 1e-3)) {
-    return x.toExponential(3);
-  }
+  if (Math.abs(x) >= 1000 || (Math.abs(x) > 0 && Math.abs(x) < 1e-3)) return x.toExponential(3);
   return x.toFixed(4);
 }
 
@@ -308,21 +299,14 @@ function waterfallBarTip(st) {
   return `${desc}${valLine}\nSHAP φ: ${sign}${phi.toFixed(4)}`;
 }
 
-/**
- * Horizontal SHAP waterfall: model output on X, one row per feature, E[f(x)] at bottom and f(x) at top
- * (same idea as shap.plots.waterfall). Feature **values** are in the side table so the plot stays readable.
- */
 function renderWaterfallSvg(baseValue, score, rows) {
   const base = Number(baseValue);
   const sc = Number(score);
-  if (!Number.isFinite(base) || !Number.isFinite(sc)) {
+  if (!Number.isFinite(base) || !Number.isFinite(sc))
     return `<p class="waterfall-empty">Cannot draw SHAP waterfall: invalid base value or score from the server.</p>`;
-  }
   const { steps, cum } = buildWaterfallSteps(base, sc, rows);
   const n = steps.length;
-  if (n === 0) {
-    return `<p class="waterfall-empty">No SHAP rows to plot.</p>`;
-  }
+  if (n === 0) return `<p class="waterfall-empty">No SHAP rows to plot.</p>`;
 
   const rowH = 46;
   const padL = 56;
@@ -356,20 +340,15 @@ function renderWaterfallSvg(baseValue, score, rows) {
   const yMid = (row) => padT + row * rowH + rowH / 2;
 
   let svg = "";
-
   for (let t = 0; t < tickVals.length; t++) {
     const xv = xScale(tickVals[t]);
-    if (!Number.isFinite(xv)) {
-      continue;
-    }
+    if (!Number.isFinite(xv)) continue;
     svg += `<line x1="${xv}" y1="${padT}" x2="${xv}" y2="${H - padB}" stroke="${gridStroke}" stroke-width="1"/>`;
   }
-
   for (let r = 0; r <= numRows; r++) {
     const yy = padT + r * rowH;
     svg += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="${gridStroke}" stroke-width="1"/>`;
   }
-
   svg += `<line x1="${xScale(sc)}" y1="${padT}" x2="${xScale(sc)}" y2="${H - padB}" stroke="rgba(251,113,133,0.35)" stroke-width="1.5" stroke-dasharray="5 4"/>`;
 
   for (let i = 0; i < n; i++) {
@@ -406,9 +385,7 @@ function renderWaterfallSvg(baseValue, score, rows) {
   let xTickStr = "";
   for (const tv of tickVals) {
     const xs = xScale(tv);
-    if (!Number.isFinite(xs)) {
-      continue;
-    }
+    if (!Number.isFinite(xs)) continue;
     xTickStr += `<text class="wf-svg-tick" x="${xs}" y="${H - 14}" text-anchor="middle">${svgEscape(String(Number(tv.toFixed(5))))}</text>`;
   }
 
@@ -582,39 +559,24 @@ function escapeHtml(s) {
 
 function lookupFeatureDescription(featureName) {
   const name = featureName != null ? String(featureName).trim() : "";
-  if (!name) {
-    return "";
-  }
+  if (!name) return "";
   const direct = featureDescriptions[name];
-  if (direct && String(direct).trim()) {
-    return String(direct).trim();
-  }
+  if (direct && String(direct).trim()) return String(direct).trim();
   const lower = name.toLowerCase();
   for (const [k, v] of Object.entries(featureDescriptions)) {
-    if (k.toLowerCase() === lower && v && String(v).trim()) {
-      return String(v).trim();
-    }
+    if (k.toLowerCase() === lower && v && String(v).trim()) return String(v).trim();
   }
   return "";
 }
 
-/** Plain-English first, then technical column name (for native tooltips and SVG &lt;title&gt;). */
 function featureHoverTitle(featureName) {
   const name = featureName != null ? String(featureName) : "";
   const desc = lookupFeatureDescription(name);
-  if (desc) {
-    return `${desc} — (${name})`;
-  }
-  return name || "Unknown feature";
+  return desc ? `${desc} — (${name})` : name || "Unknown feature";
 }
 
-/** Escape for double-quoted HTML attributes (e.g. title="…"). */
 function escapeHtmlAttr(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /** Custom tooltip (native `title` cannot use a readable font size). */
@@ -766,13 +728,11 @@ function renderCompare(data) {
   const hBefore = (data.score_before / maxH) * 100;
   const hAfter = (data.score_after / maxH) * 100;
 
-  const block = (title, rows, score) => {
-    return `
-      <div>
-        <h4 style="margin:0 0 0.5rem;font-size:0.85rem;color:var(--muted)">${title}</h4>
-        ${renderWaterfallSvg(data.base_value, score, rows)}
-      </div>`;
-  };
+  const block = (title, rows, score) => `
+    <div>
+      <h4 style="margin:0 0 0.5rem;font-size:0.85rem;color:var(--muted)">${title}</h4>
+      ${renderWaterfallSvg(data.base_value, score, rows)}
+    </div>`;
 
   const rows = data.delta_table || [];
   const deltaSection = renderFeatureDeltasSection(rows);
@@ -807,11 +767,107 @@ function renderCompare(data) {
     </div>`;
 }
 
+// ---------------------------------------------------------------------------
+// Scenario param inputs
+// ---------------------------------------------------------------------------
+
+function renderScenarioParams(scenarioName) {
+  const wrap = $("#scenario-params-wrap");
+  const inner = $("#scenario-params-inner");
+  const defs = scenarioParamDefs[scenarioName] || [];
+  if (!defs.length) {
+    wrap.classList.add("hidden");
+    inner.innerHTML = "";
+    return;
+  }
+  inner.innerHTML = defs
+    .map((p) => {
+      const id = `sp-${p.name}`;
+      const step = p.type === "integer" ? "1" : "0.01";
+      const min = p.min != null ? `min="${p.min}"` : "";
+      const max = p.max != null ? `max="${p.max}"` : "";
+      return `<label class="field-inline">
+        <span>${escapeHtml(p.label)}</span>
+        <input id="${id}" type="number" step="${step}" ${min} ${max} value="${p.default}" data-param="${escapeHtmlAttr(p.name)}" />
+      </label>`;
+    })
+    .join("");
+  wrap.classList.remove("hidden");
+}
+
+function readScenarioParams() {
+  const params = {};
+  document.querySelectorAll("#scenario-params-inner input[data-param]").forEach((inp) => {
+    params[inp.dataset.param] = Number(inp.value);
+  });
+  return params;
+}
+
+// ---------------------------------------------------------------------------
+// Manual slider cascade logic
+// ---------------------------------------------------------------------------
+
+let _cascadeDebounce = null;
+
+function getCascadeOrderAmount() {
+  return Number($("#cascade-order-amount")?.value || 120);
+}
+
+function getCascadeNumInstallments() {
+  return Number($("#cascade-num-installments")?.value || 4);
+}
+
+async function triggerCascade(profileId, changedFeature, newValue) {
+  try {
+    const data = await api("/api/cascade-features", {
+      method: "POST",
+      body: JSON.stringify({
+        profile_id: profileId,
+        changed_feature: changedFeature,
+        new_value: newValue,
+        current_overrides: currentManual,
+        order_amount: getCascadeOrderAmount(),
+        num_installments: getCascadeNumInstallments(),
+      }),
+    });
+    const cascaded = data.cascaded || [];
+    for (const c of cascaded) {
+      // Update the in-memory manual value
+      currentManual[c.feature] = c.new_value;
+      // Find the slider element and update it
+      const safeId = `sf-${c.feature.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      const slider = document.getElementById(safeId);
+      if (slider) {
+        slider.value = c.new_value;
+        // Update the label
+        const row = slider.closest(".slider-row");
+        if (row) {
+          const lbl = row.querySelector("label span:last-child");
+          if (lbl) lbl.textContent = Number(c.new_value).toFixed(3);
+          // Highlight the row
+          row.classList.add("cascaded");
+          row.title = `Auto-updated: ${c.reason}`;
+          row.dataset.cascadeReason = c.reason;
+          // Expand the accordion section if it's closed
+          const accItem = row.closest(".acc-item");
+          if (accItem && !accItem.classList.contains("open")) {
+            accItem.classList.add("open");
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // Cascade errors are non-fatal
+    console.warn("Cascade error:", e);
+  }
+}
+
 async function loadManualSliders(profileId) {
   const data = await api(`/api/profile-features/${encodeURIComponent(profileId)}`);
   const wrap = $("#manual-acc");
   wrap.innerHTML = "";
   currentManual = {};
+  // Clear any previous cascade highlights
   const groups = data.groups || {};
   for (const [gname, sliders] of Object.entries(groups)) {
     const item = document.createElement("div");
@@ -822,9 +878,8 @@ async function loadManualSliders(profileId) {
     head.innerHTML = `<span>${escapeHtml(gname)}</span><span>▾</span>`;
     const body = document.createElement("div");
     body.className = "acc-body";
-    head.addEventListener("click", () => {
-      item.classList.toggle("open");
-    });
+    head.addEventListener("click", () => item.classList.toggle("open"));
+
     for (const s of sliders) {
       currentManual[s.name] = s.value;
       const row = document.createElement("div");
@@ -839,15 +894,21 @@ async function loadManualSliders(profileId) {
       `;
       row.setAttribute("data-tip", encodeDataTip(desc ? `${tip}\n${desc}` : tip));
       const input = row.querySelector("input");
-      input.setAttribute(
-        "aria-label",
-        desc ? `${s.label}. ${desc}` : `${s.label}. ${tip}`,
-      );
+      input.setAttribute("aria-label", desc ? `${s.label}. ${desc}` : `${s.label}. ${tip}`);
       const lbl = row.querySelector("label span:last-child");
+
       input.addEventListener("input", () => {
         const v = parseFloat(input.value);
         currentManual[s.name] = v;
         lbl.textContent = v.toFixed(3);
+        // Clear cascade highlight on directly-moved slider
+        row.classList.remove("cascaded");
+        row.dataset.cascadeReason = "";
+        // Debounce cascade call
+        if (_cascadeDebounce) clearTimeout(_cascadeDebounce);
+        _cascadeDebounce = setTimeout(() => {
+          triggerCascade(profileId, s.name, v);
+        }, 350);
       });
       body.appendChild(row);
     }
@@ -857,6 +918,46 @@ async function loadManualSliders(profileId) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Model reload
+// ---------------------------------------------------------------------------
+
+async function reloadModel() {
+  const runId = $("#run-id").value.trim();
+  const dictTable = $("#feature-dict-table").value.trim();
+  const msg = $("#reload-msg");
+  if (!runId) {
+    msg.innerHTML = `<span class="err">Enter a Run ID first.</span>`;
+    return;
+  }
+  msg.textContent = "Clearing session and starting model load…";
+  try {
+    await api("/api/reload-model", {
+      method: "POST",
+      body: JSON.stringify({ run_id: runId, feature_dictionary_table: dictTable || null }),
+    });
+    // Clear profile dropdown
+    $("#profile-select").innerHTML = "";
+    $("#load-msg").textContent = "Profiles cleared. Load new profiles after the model is ready.";
+    $("#results").innerHTML = "";
+    // Poll until ready
+    const h = await pollUntilReady(msg);
+    if (h.ok) {
+      msg.textContent = `Model loaded (run: ${runId}).`;
+      // Refresh meta to get updated feature descriptions + scenarios
+      await refreshMeta();
+    } else {
+      msg.innerHTML = `<span class="err">Load failed: ${escapeHtml(h.error || "Unknown error")}</span>`;
+    }
+  } catch (e) {
+    msg.innerHTML = `<span class="err">${escapeHtml(String(e))}</span>`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+
 async function init() {
   try {
     await refreshMeta();
@@ -864,22 +965,15 @@ async function init() {
     $("#load-msg").innerHTML = `<span class="err">${escapeHtml(String(e))}</span>`;
   }
 
+  // Initial health poll
   try {
-    let h = await fetch("/api/health").then((r) => r.json());
-    while (h.model_loading) {
-      setHealth(false, null, true, {
-        elapsed: h.load_elapsed_sec,
-        stuckHint: h.load_stuck_hint,
-      });
-      await new Promise((r) => setTimeout(r, 1500));
-      h = await fetch("/api/health").then((r) => r.json());
-    }
-    setHealth(h.ok, h.error, false);
+    const h = await pollUntilReady(null);
     if (!h.ok && h.error) console.error(h.error);
   } catch (e) {
     setHealth(false, String(e), false);
   }
 
+  // Tabs
   document.querySelectorAll(".tab").forEach((t) => {
     t.addEventListener("click", () => {
       document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
@@ -890,6 +984,10 @@ async function init() {
     });
   });
 
+  // Reload model button
+  $("#btn-reload-model").addEventListener("click", reloadModel);
+
+  // Load profiles
   $("#btn-load").addEventListener("click", async () => {
     $("#load-msg").textContent = "Loading…";
     const table = $("#predictions-table").value.trim();
@@ -915,28 +1013,22 @@ async function init() {
       let msg = res.loaded ? `Loaded ${res.loaded} profile(s).` : (res.warning || "Done.");
       if (res.warnings?.length) msg += " " + res.warnings.join(" ");
       $("#load-msg").textContent = msg;
-      if (res.profiles?.length) {
-        await onProfileChange();
-      }
+      if (res.profiles?.length) await onProfileChange();
     } catch (e) {
       $("#load-msg").innerHTML = `<span class="err">${escapeHtml(String(e))}</span>`;
     }
   });
 
+  // Tier save/reset
   $("#btn-tier-save")?.addEventListener("click", () => {
     try {
       const cfg = readTierConfigFromForm();
       localStorage.setItem("what_if_tier_config", JSON.stringify(cfg));
       const msg = $("#tier-save-msg");
-      if (msg) {
-        msg.textContent = "Saved. Click Run what-if again to refresh tier labels in the results.";
-      }
+      if (msg) msg.textContent = "Saved. Click Run what-if again to refresh tier labels in the results.";
     } catch (e) {
-      console.error(e);
       const msg = $("#tier-save-msg");
-      if (msg) {
-        msg.textContent = `Save failed: ${e}`;
-      }
+      if (msg) msg.textContent = `Save failed: ${e}`;
     }
   });
 
@@ -944,21 +1036,22 @@ async function init() {
     localStorage.removeItem("what_if_tier_config");
     renderTierEditors();
     const msg = $("#tier-save-msg");
-    if (msg) {
-      msg.textContent = "Restored server defaults in the form. Click Run what-if to refresh results.";
-    }
+    if (msg) msg.textContent = "Restored server defaults in the form. Click Run what-if to refresh results.";
   });
 
+  // Profile change
   $("#profile-select").addEventListener("change", onProfileChange);
 
-  $("#scenario-select").addEventListener("change", () => {
+  // Scenario change → show params + maybe load sliders
+  $("#scenario-select").addEventListener("change", async () => {
     const sc = $("#scenario-select").value;
-    const manual = sc === "Manual adjustment";
-    $("#manual-wrap").classList.toggle("hidden", !manual);
-    if (manual) {
+    const isManual = sc === "Manual adjustment";
+    $("#manual-wrap").classList.toggle("hidden", !isManual);
+    if (isManual) {
       const pid = $("#profile-select").value;
-      if (pid) loadManualSliders(pid);
+      if (pid) await loadManualSliders(pid);
     }
+    renderScenarioParams(sc);
   });
 
   async function onProfileChange() {
@@ -973,6 +1066,7 @@ async function init() {
     bindVizTooltips(simPanel);
   }
 
+  // Run what-if
   $("#btn-run").addEventListener("click", async () => {
     const pid = $("#profile-select").value;
     if (!pid) {
@@ -984,6 +1078,7 @@ async function init() {
       profile_id: pid,
       scenario,
       manual_features: scenario === "Manual adjustment" ? currentManual : null,
+      scenario_params: scenario !== "(No scenario)" && scenario !== "Manual adjustment" ? readScenarioParams() : null,
     };
     $("#results").innerHTML = `<div class="card">Running…</div>`;
     try {

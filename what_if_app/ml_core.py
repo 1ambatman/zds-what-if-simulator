@@ -1,4 +1,4 @@
-"""LightGBM + SHAP scoring, tiering, and preset scenarios (from what_if_simulator notebook)."""
+"""LightGBM + SHAP scoring, tiering, preset scenarios, and cascade rules."""
 
 from __future__ import annotations
 
@@ -307,8 +307,135 @@ def feature_delta_table(
     return json.loads(out.to_json(orient="records"))
 
 
-# --- Preset scenarios (unchanged from notebook) ---
+# ---------------------------------------------------------------------------
+# Cascade rules
+# ---------------------------------------------------------------------------
 
+def compute_cascade(
+    changed_feature: str,
+    old_value: float,
+    new_value: float,
+    profile_df: pd.DataFrame,
+    avg_installment: float = 30.0,
+) -> list[dict[str, Any]]:
+    """
+    Given one feature that changed, return cascaded updates for related features.
+
+    Each entry: {"feature": str, "new_value": float, "reason": str}
+    Only features already in V1_FEATURES and different from changed_feature are returned.
+    """
+    delta = new_value - old_value
+    if abs(delta) < 1e-9:
+        return []
+
+    results: dict[str, dict[str, Any]] = {}
+
+    def cur(f: str) -> float:
+        if f in profile_df.columns:
+            return float(profile_df[f].iloc[0])
+        return 0.0
+
+    def upd(f: str, nv: float, reason: str) -> None:
+        if f in V1_FEATURES and f != changed_feature:
+            results[f] = {"feature": f, "new_value": round(float(nv), 6), "reason": reason}
+
+    # --- Delinquent count changed ---
+    if changed_feature.startswith("delinquent_cnt"):
+        count_delta = delta
+        for f in V1_FEATURES:
+            if f == changed_feature:
+                continue
+            if "delinquent_amt" in f and ("sum" in f or "max" in f):
+                upd(f, max(0.0, cur(f) + count_delta * avg_installment),
+                    f"Delinquent amounts grow by avg installment (${avg_installment:.0f}) per new missed payment")
+            elif "delinquent_amt_avg" in f:
+                upd(f, max(0.0, cur(f) + count_delta * avg_installment * 0.3),
+                    "Average delinquent amount also rises with count")
+            elif f.startswith("charge_approved_pct_"):
+                upd(f, max(0.0, min(1.0, cur(f) - 0.05 * count_delta)),
+                    "Delinquencies reduce charge approval rate (~5% per new missed payment)")
+            elif "insufficient_funds_pct" in f:
+                upd(f, max(0.0, min(1.0, cur(f) + 0.04 * count_delta)),
+                    "Delinquencies correlate with insufficient funds events (~4% per event)")
+            elif f.startswith("retry_charge_pct_"):
+                upd(f, max(0.0, min(1.0, cur(f) + 0.03 * count_delta)),
+                    "More missed payments lead to more payment retries (~3% per event)")
+            elif f == "credit_utilization_lag1d":
+                upd(f, max(0.0, min(1.0, cur(f) + 0.05 * count_delta)),
+                    "Missed payments increase outstanding balance and credit utilization")
+
+    # --- Charge approval rate changed ---
+    elif changed_feature.startswith("charge_approved_pct_"):
+        for f in V1_FEATURES:
+            if f == changed_feature:
+                continue
+            if "insufficient_funds_pct" in f:
+                upd(f, max(0.0, min(1.0, cur(f) - delta * 0.6)),
+                    "Higher approval rate means fewer insufficient-fund declines")
+            elif "charge_declined_insufficient_funds_pct" in f:
+                upd(f, max(0.0, min(1.0, cur(f) - delta * 0.5)),
+                    "Higher approval rate reduces the declined charge rate")
+            elif f.startswith("retry_charge_pct_"):
+                upd(f, max(0.0, min(1.0, cur(f) - delta * 0.4)),
+                    "Higher approval rate reduces the need for payment retries")
+
+    # --- Retry charge rate changed ---
+    elif changed_feature.startswith("retry_charge_pct_"):
+        for f in V1_FEATURES:
+            if f == changed_feature:
+                continue
+            if f.startswith("charge_approved_pct_"):
+                upd(f, max(0.0, min(1.0, cur(f) - delta)),
+                    "More retried charges = fewer first-attempt approvals")
+            elif f.startswith("retry_charge_amt_") and ("sum" in f or "max" in f):
+                ratio = (new_value / old_value) if old_value > 1e-9 else 1.5
+                upd(f, max(0.0, cur(f) * min(ratio, 3.0)),
+                    "Retry amount scales proportionally with retry rate")
+
+    # --- On-time payment sum changed ---
+    elif changed_feature.startswith("ontime_amt_sum_"):
+        ratio = (new_value / old_value) if old_value > 1e-9 else 1.0 + delta / max(avg_installment * 12, 1)
+        ratio = max(0.1, min(ratio, 5.0))
+        for f in V1_FEATURES:
+            if f == changed_feature:
+                continue
+            if f.startswith("paid_amt_sum"):
+                upd(f, max(0.0, cur(f) * min(ratio, 2.0)),
+                    "On-time payments are included in total paid amounts")
+            elif f.startswith("late_amt_sum"):
+                upd(f, max(0.0, cur(f) * max(0.3, 2.0 - ratio)),
+                    "More on-time payments means fewer late payments")
+            elif f.startswith("charge_approved_pct_"):
+                upd(f, min(1.0, cur(f) + (ratio - 1.0) * 0.08),
+                    "Consistent on-time payments improve charge approval rate")
+
+    # --- Credit utilization changed ---
+    elif changed_feature == "credit_utilization_lag1d":
+        for f in V1_FEATURES:
+            if f == changed_feature:
+                continue
+            if f == "outstanding_amt_lag1d" and old_value > 1e-9:
+                upd(f, max(0.0, cur(f) * (new_value / old_value)),
+                    "Credit utilization directly reflects outstanding balance")
+            elif "pr_approved_declined_amt_ratio" in f:
+                upd(f, max(0.0, cur(f) * max(0.1, 1.5 - new_value)),
+                    "Higher utilization leaves less credit room for new purchases")
+
+    # --- Outstanding amount changed ---
+    elif changed_feature == "outstanding_amt_lag1d" and old_value > 1e-9:
+        for f in V1_FEATURES:
+            if f == changed_feature:
+                continue
+            if f == "credit_utilization_lag1d":
+                upd(f, min(1.0, cur(f) * min(new_value / old_value, 2.0)),
+                    "Outstanding balance drives credit utilization")
+
+    return list(results.values())
+
+
+# ---------------------------------------------------------------------------
+# Preset scenarios
+# ---------------------------------------------------------------------------
 
 def scenario_single_delinquency(profile: pd.DataFrame, amount: float = 200.0) -> pd.DataFrame:
     p = profile.copy()
@@ -323,6 +450,17 @@ def scenario_single_delinquency(profile: pd.DataFrame, amount: float = 200.0) ->
     for f in [f for f in V1_FEATURES if "insufficient_funds_amt" in f]:
         p[f] = p[f] + amount
     return p
+
+
+def scenario_miss_one_installment(profile: pd.DataFrame, order_amount: float = 120.0, num_installments: int = 4) -> pd.DataFrame:
+    """Customer misses a single installment payment."""
+    installment = order_amount / num_installments
+    return scenario_single_delinquency(profile, amount=installment)
+
+
+def scenario_miss_entire_order(profile: pd.DataFrame, order_amount: float = 120.0) -> pd.DataFrame:
+    """Customer misses all installments — the full order goes delinquent."""
+    return scenario_single_delinquency(profile, amount=order_amount)
 
 
 def scenario_cure_delinquencies(profile: pd.DataFrame) -> pd.DataFrame:
@@ -374,30 +512,256 @@ def scenario_new_card(profile: pd.DataFrame) -> pd.DataFrame:
     return p
 
 
+def scenario_place_new_order(profile: pd.DataFrame, order_amount: float = 120.0, num_installments: int = 4) -> pd.DataFrame:
+    """Customer places a new BNPL order — adds to outstanding balance and credit utilization."""
+    p = profile.copy()
+    installment = order_amount / num_installments
+    for f in [f for f in V1_FEATURES if f.startswith("pr_cnt_")]:
+        p[f] = p[f] + 1
+    for f in [f for f in V1_FEATURES if "pr_approved_amt_sum" in f]:
+        p[f] = p[f] + order_amount
+    for f in [f for f in V1_FEATURES if "transact_order_amt_sum" in f]:
+        p[f] = p[f] + order_amount
+    for f in [f for f in V1_FEATURES if "transact_checkout_order_cnt" in f]:
+        p[f] = p[f] + 1
+    if "outstanding_amt_lag1d" in V1_FEATURES:
+        p["outstanding_amt_lag1d"] = p["outstanding_amt_lag1d"] + order_amount
+    if "credit_utilization_lag1d" in V1_FEATURES:
+        p["credit_utilization_lag1d"] = np.minimum(p["credit_utilization_lag1d"] + 0.12, 1.0)
+    for f in [f for f in V1_FEATURES if f.startswith("due_amt_")]:
+        p[f] = p[f] + installment
+    for f in [f for f in V1_FEATURES if "transact_order_amt_max" in f]:
+        p[f] = np.maximum(p[f], order_amount)
+    return p
+
+
+def scenario_payment_extension(profile: pd.DataFrame, order_amount: float = 120.0, num_installments: int = 4) -> pd.DataFrame:
+    """Customer requests a payment extension — defers one installment."""
+    p = profile.copy()
+    for f in [f for f in V1_FEATURES if "transact_extension_request_cnt" in f]:
+        p[f] = p[f] + 1
+    installment = order_amount / num_installments
+    for f in [f for f in V1_FEATURES if f.startswith("late_amt_") and "sum" in f]:
+        p[f] = p[f] + installment * 0.5
+    return p
+
+
+def scenario_card_declined_insufficient_funds(profile: pd.DataFrame, order_amount: float = 120.0, num_declines: int = 3) -> pd.DataFrame:
+    """Customer's card is declined N times due to insufficient funds."""
+    p = profile.copy()
+    for f in [f for f in V1_FEATURES if "insufficient_funds_pct" in f]:
+        p[f] = np.minimum(p[f] + 0.12 * num_declines, 1.0)
+    for f in [f for f in V1_FEATURES if f.startswith("charge_approved_pct_")]:
+        p[f] = np.maximum(p[f] - 0.08 * num_declines, 0.0)
+    for f in [f for f in V1_FEATURES if "insufficient_funds_amt" in f and "sum" in f]:
+        p[f] = p[f] + order_amount * num_declines
+    for f in [f for f in V1_FEATURES if f.startswith("retry_charge_pct_")]:
+        p[f] = np.minimum(p[f] + 0.10 * num_declines, 1.0)
+    return p
+
+
+def scenario_credit_utilization_maxed(profile: pd.DataFrame) -> pd.DataFrame:
+    """Customer's credit limit is nearly exhausted — constrains new purchases."""
+    p = profile.copy()
+    if "credit_utilization_lag1d" in V1_FEATURES:
+        p["credit_utilization_lag1d"] = 1.0
+    if "outstanding_amt_lag1d" in V1_FEATURES:
+        p["outstanding_amt_lag1d"] = p["outstanding_amt_lag1d"] * 2.5
+    for f in [f for f in V1_FEATURES if "pr_approved_declined_amt_ratio" in f]:
+        p[f] = p[f] * 0.3
+    for f in [f for f in V1_FEATURES if f.startswith("pr_declined_cnt_")]:
+        p[f] = p[f] + 2
+    return p
+
+
+def scenario_no_orders_60_days(profile: pd.DataFrame) -> pd.DataFrame:
+    """Customer has placed no new orders in 60 days — early churn signal."""
+    p = profile.copy()
+    if "days_since_last_order_lag1d" in V1_FEATURES:
+        p["days_since_last_order_lag1d"] = 60.0
+    for f in [f for f in V1_FEATURES if f.startswith("pr_cnt_") and any(w in f for w in ["7d", "14d", "30d"])]:
+        p[f] = 0.0
+    return p
+
+
+def scenario_pay_one_installment(profile: pd.DataFrame, order_amount: float = 120.0, num_installments: int = 4) -> pd.DataFrame:
+    """Customer pays back one delinquent installment."""
+    installment = order_amount / num_installments
+    p = profile.copy()
+    for f in [f for f in V1_FEATURES if f.startswith("delinquent_cnt")]:
+        p[f] = np.maximum(p[f] - 1, 0.0)
+    for f in [f for f in V1_FEATURES if "delinquent_amt" in f and "sum" in f]:
+        p[f] = np.maximum(p[f] - installment, 0.0)
+    for f in [f for f in V1_FEATURES if f.startswith("paid_amt_sum")]:
+        p[f] = p[f] + installment
+    for f in [f for f in V1_FEATURES if f.startswith("charge_approved_pct_")]:
+        p[f] = np.minimum(p[f] + 0.04, 1.0)
+    if "outstanding_amt_lag1d" in V1_FEATURES:
+        p["outstanding_amt_lag1d"] = np.maximum(p["outstanding_amt_lag1d"] - installment, 0.0)
+    return p
+
+
+def scenario_pay_all_delinquent(profile: pd.DataFrame) -> pd.DataFrame:
+    """Customer settles entire delinquent balance — full cure."""
+    p = profile.copy()
+    for f in [f for f in V1_FEATURES if f.startswith("delinquent_")]:
+        p[f] = 0.0
+    if "outstanding_amt_lag1d" in V1_FEATURES:
+        outstanding = float(p["outstanding_amt_lag1d"].iloc[0])
+        for f in [f for f in V1_FEATURES if f.startswith("paid_amt_sum")]:
+            p[f] = p[f] + outstanding
+        p["outstanding_amt_lag1d"] = 0.0
+    if "credit_utilization_lag1d" in V1_FEATURES:
+        p["credit_utilization_lag1d"] = np.maximum(p["credit_utilization_lag1d"] * 0.4, 0.0)
+    for f in [f for f in V1_FEATURES if f.startswith("charge_approved_pct_")]:
+        p[f] = np.minimum(p[f] + 0.15, 1.0)
+    for f in [f for f in V1_FEATURES if "insufficient_funds_pct" in f]:
+        p[f] = np.maximum(p[f] * 0.3, 0.0)
+    for f in [f for f in V1_FEATURES if f.startswith("retry_charge_pct_")]:
+        p[f] = np.maximum(p[f] * 0.4, 0.0)
+    return p
+
+
+def scenario_partial_payback(profile: pd.DataFrame, order_amount: float = 120.0, num_installments: int = 4) -> pd.DataFrame:
+    """Customer pays back half their delinquent balance."""
+    half = order_amount / 2
+    p = profile.copy()
+    for f in [f for f in V1_FEATURES if f.startswith("delinquent_cnt")]:
+        p[f] = np.maximum(p[f] * 0.5, 0.0)
+    for f in [f for f in V1_FEATURES if "delinquent_amt" in f and "sum" in f]:
+        p[f] = np.maximum(p[f] * 0.5, 0.0)
+    for f in [f for f in V1_FEATURES if f.startswith("paid_amt_sum")]:
+        p[f] = p[f] + half
+    for f in [f for f in V1_FEATURES if f.startswith("charge_approved_pct_")]:
+        p[f] = np.minimum(p[f] + 0.08, 1.0)
+    if "outstanding_amt_lag1d" in V1_FEATURES:
+        p["outstanding_amt_lag1d"] = np.maximum(p["outstanding_amt_lag1d"] - half, 0.0)
+    return p
+
+
 PRESET_SCENARIOS: dict[str, dict[str, Any]] = {
-    "Single order delinquency": {
-        "fn": scenario_single_delinquency,
-        "params": {"amount": 200.0},
-        "description": "Good customer misses one payment",
+    # Risk increasing
+    "Miss one installment": {
+        "fn": scenario_miss_one_installment,
+        "params": {"order_amount": 120.0, "num_installments": 4},
+        "param_defs": [
+            {"name": "order_amount", "label": "Order amount ($)", "type": "number", "default": 120.0, "min": 1},
+            {"name": "num_installments", "label": "No. of installments", "type": "integer", "default": 4, "min": 1},
+        ],
+        "description": "Customer misses one installment ($30 on a $120/4-installment order)",
+        "category": "Risk ↑",
     },
-    "Cure all delinquencies": {
-        "fn": scenario_cure_delinquencies,
-        "params": {},
-        "description": "Bad customer pays off all delinquent balances",
+    "Miss entire order": {
+        "fn": scenario_miss_entire_order,
+        "params": {"order_amount": 120.0},
+        "param_defs": [
+            {"name": "order_amount", "label": "Order amount ($)", "type": "number", "default": 120.0, "min": 1},
+        ],
+        "description": "All installments of one order go delinquent (full order missed)",
+        "category": "Risk ↑",
     },
     "Missed retry charges": {
         "fn": scenario_missed_retries,
         "params": {"retry_pct_increase": 0.3},
-        "description": "Payment retries start failing",
+        "param_defs": [
+            {"name": "retry_pct_increase", "label": "Retry rate increase (0–1)", "type": "number", "default": 0.3, "min": 0, "max": 1},
+        ],
+        "description": "Payment retries start failing — bank account under stress",
+        "category": "Risk ↑",
+    },
+    "Card declined 3× (insufficient funds)": {
+        "fn": scenario_card_declined_insufficient_funds,
+        "params": {"order_amount": 120.0, "num_declines": 3},
+        "param_defs": [
+            {"name": "order_amount", "label": "Order amount ($)", "type": "number", "default": 120.0, "min": 1},
+            {"name": "num_declines", "label": "Number of declines", "type": "integer", "default": 3, "min": 1},
+        ],
+        "description": "Card is declined multiple times — signals insufficient funds",
+        "category": "Risk ↑",
+    },
+    "Payment extension request": {
+        "fn": scenario_payment_extension,
+        "params": {"order_amount": 120.0, "num_installments": 4},
+        "param_defs": [
+            {"name": "order_amount", "label": "Order amount ($)", "type": "number", "default": 120.0, "min": 1},
+            {"name": "num_installments", "label": "No. of installments", "type": "integer", "default": 4, "min": 1},
+        ],
+        "description": "Customer requests to defer one installment — cash flow stress signal",
+        "category": "Risk ↑",
+    },
+    "Credit utilization maxed out": {
+        "fn": scenario_credit_utilization_maxed,
+        "params": {},
+        "param_defs": [],
+        "description": "Credit limit nearly exhausted — constrains new purchase approvals",
+        "category": "Risk ↑",
+    },
+    "No orders for 60 days": {
+        "fn": scenario_no_orders_60_days,
+        "params": {},
+        "param_defs": [],
+        "description": "Customer hasn't placed a new order in 60 days — early churn signal",
+        "category": "Activity",
+    },
+    "Place a new order": {
+        "fn": scenario_place_new_order,
+        "params": {"order_amount": 120.0, "num_installments": 4},
+        "param_defs": [
+            {"name": "order_amount", "label": "Order amount ($)", "type": "number", "default": 120.0, "min": 1},
+            {"name": "num_installments", "label": "No. of installments", "type": "integer", "default": 4, "min": 1},
+        ],
+        "description": "Customer places a new BNPL order — adds to outstanding balance",
+        "category": "Activity",
+    },
+    # Risk decreasing / recovery
+    "Pay back one installment": {
+        "fn": scenario_pay_one_installment,
+        "params": {"order_amount": 120.0, "num_installments": 4},
+        "param_defs": [
+            {"name": "order_amount", "label": "Order amount ($)", "type": "number", "default": 120.0, "min": 1},
+            {"name": "num_installments", "label": "No. of installments", "type": "integer", "default": 4, "min": 1},
+        ],
+        "description": "Customer pays one missed installment — partial recovery signal",
+        "category": "Risk ↓",
+    },
+    "Pay back half the delinquent balance": {
+        "fn": scenario_partial_payback,
+        "params": {"order_amount": 120.0, "num_installments": 4},
+        "param_defs": [
+            {"name": "order_amount", "label": "Order amount ($)", "type": "number", "default": 120.0, "min": 1},
+            {"name": "num_installments", "label": "No. of installments", "type": "integer", "default": 4, "min": 1},
+        ],
+        "description": "Customer settles half of their delinquent balance",
+        "category": "Risk ↓",
+    },
+    "Settle all delinquent balance": {
+        "fn": scenario_pay_all_delinquent,
+        "params": {},
+        "param_defs": [],
+        "description": "Customer clears entire delinquent balance — full cure scenario",
+        "category": "Risk ↓",
+    },
+    "Cure all delinquencies": {
+        "fn": scenario_cure_delinquencies,
+        "params": {},
+        "param_defs": [],
+        "description": "All delinquencies resolved; on-time and paid amounts improve",
+        "category": "Risk ↓",
     },
     "Consistent on-time payments (3 months)": {
         "fn": scenario_consistent_ontime,
         "params": {"months": 3},
-        "description": "Customer pays on time for 3 months",
+        "param_defs": [
+            {"name": "months", "label": "Months of on-time payments", "type": "integer", "default": 3, "min": 1},
+        ],
+        "description": "Customer pays every installment on time for N months",
+        "category": "Risk ↓",
     },
     "New card added": {
         "fn": scenario_new_card,
         "params": {},
-        "description": "Customer adds a fresh payment card",
+        "param_defs": [],
+        "description": "Customer adds a fresh payment card — signals access to new credit",
+        "category": "Risk ↓",
     },
 }

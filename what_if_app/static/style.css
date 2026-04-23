@@ -916,3 +916,106 @@ textarea {
   color: var(--bad);
   font-size: 0.85rem;
 }
+
+/* Section divider between left-panel sections */
+.section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 1.1rem 0;
+}
+
+/* Reload model button — compact, sits below the field */
+.reload-btn {
+  width: 100%;
+  margin-bottom: 0.25rem;
+  font-size: 0.82rem;
+  padding: 0.5rem 0.9rem;
+}
+
+/* Scenario parameter inputs — horizontal row under scenario selector */
+.scenario-params {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.07);
+}
+
+.scenario-params.hidden {
+  display: none;
+}
+
+.scenario-params-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+/* Cascade section header in manual mode */
+.cascade-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.cascade-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--warn);
+  flex-shrink: 0;
+}
+
+/* Order amount / installments inputs above manual sliders */
+.cascade-params {
+  display: flex;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* Inline label+input pairs used in scenario params and cascade params */
+.field-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 120px;
+}
+
+.field-inline span {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.field-inline input {
+  width: 100%;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.5rem;
+}
+
+/* Cascaded slider highlight — yellow pulse border */
+@keyframes cascade-pulse {
+  0%   { border-color: rgba(251, 191, 36, 0.9); box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.25); }
+  60%  { border-color: rgba(251, 191, 36, 0.5); box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.12); }
+  100% { border-color: rgba(251, 191, 36, 0.5); box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.12); }
+}
+
+.slider-row.cascaded {
+  border-radius: 6px;
+  padding: 0.2rem 0.3rem;
+  margin-left: -0.3rem;
+  margin-right: -0.3rem;
+  background: rgba(251, 191, 36, 0.06);
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  animation: cascade-pulse 0.5s ease-out forwards;
+}
+
+.slider-row.cascaded input[type="range"] {
+  accent-color: var(--warn);
+}
+
+.slider-row.cascaded label {
+  color: var(--warn);
+}
