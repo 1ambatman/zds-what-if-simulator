@@ -10,6 +10,7 @@ cd "$DIR"
 
 BOLD=$'\033[1m'; GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'; CYAN=$'\033[0;36m'; NC=$'\033[0m'
 APP_URL="http://localhost:8765"
+DATABRICKS_HOST="https://adb-3834014070274745.5.azuredatabricks.net"
 
 step() { echo "${BOLD}▶ $1${NC}"; }
 ok()   { echo "${GREEN}✓ $1${NC}"; }
@@ -22,20 +23,28 @@ echo "${BOLD}║      ZDS What If Simulator           ║${NC}"
 echo "${BOLD}╚══════════════════════════════════════╝${NC}"
 echo ""
 
-# ── 1. Check Databricks CLI auth ──────────────────────────────────────────────
-if [ ! -f "$HOME/.databrickscfg" ]; then
-    err "Databricks CLI is not set up."
-    echo ""
-    echo "${CYAN}  Run this command in your terminal first, then relaunch:${NC}"
-    echo ""
-    echo "  ${BOLD}databricks auth login${NC}"
-    echo ""
-    read -r -p "Press Enter to exit..."
-    exit 1
+# ── 1. Install Databricks CLI if missing ──────────────────────────────────────
+if ! command -v databricks &>/dev/null; then
+    step "Installing Databricks CLI..."
+    if command -v brew &>/dev/null; then
+        brew install databricks/tap/databricks
+    else
+        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+        # Reload PATH so the newly installed binary is found
+        export PATH="$HOME/.databricks/bin:$PATH"
+    fi
+    ok "Databricks CLI installed"
 fi
-ok "Databricks auth found (~/.databrickscfg)"
+ok "Databricks CLI ready"
 
-# ── 2. Create .env if missing ─────────────────────────────────────────────────
+# ── 2. Log in if not authenticated ────────────────────────────────────────────
+if ! databricks auth token --host "$DATABRICKS_HOST" &>/dev/null 2>&1; then
+    step "Logging in to Databricks (browser will open)..."
+    databricks auth login --host "$DATABRICKS_HOST"
+fi
+ok "Databricks auth OK"
+
+# ── 3. Create .env if missing ─────────────────────────────────────────────────
 if [ ! -f ".env" ]; then
     step "Creating .env with defaults..."
     cat > .env << 'ENVEOF'
@@ -49,7 +58,7 @@ ENVEOF
     ok ".env created"
 fi
 
-# ── 3. Mount ~/.databrickscfg into the container ──────────────────────────────
+# ── 4. Mount ~/.databrickscfg into the container ──────────────────────────────
 cat > docker-compose.override.yml << OVERRIDEOF
 services:
   app:
@@ -57,7 +66,7 @@ services:
       - ${HOME}/.databrickscfg:/root/.databrickscfg:ro
 OVERRIDEOF
 
-# ── 4. Check Docker ───────────────────────────────────────────────────────────
+# ── 5. Check Docker ───────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
     err "Docker Desktop is not installed."
     echo ""
@@ -68,7 +77,7 @@ if ! command -v docker &>/dev/null; then
 fi
 ok "Docker found"
 
-# ── 5. Start Docker daemon if not running ─────────────────────────────────────
+# ── 6. Start Docker daemon if not running ─────────────────────────────────────
 if ! docker info &>/dev/null 2>&1; then
     warn "Docker Desktop is not running — starting it now..."
     open -a "Docker" 2>/dev/null || true
@@ -84,15 +93,15 @@ if ! docker info &>/dev/null 2>&1; then
 fi
 ok "Docker is running"
 
-# ── 6. Pull latest image ──────────────────────────────────────────────────────
+# ── 7. Pull latest image ──────────────────────────────────────────────────────
 step "Pulling latest image (first run may take a few minutes)..."
 docker compose pull
 
-# ── 7. Start container ────────────────────────────────────────────────────────
+# ── 8. Start container ────────────────────────────────────────────────────────
 step "Starting app..."
 docker compose up -d
 
-# ── 8. Wait for health check ──────────────────────────────────────────────────
+# ── 9. Wait for health check ──────────────────────────────────────────────────
 step "Waiting for app to be ready..."
 for i in $(seq 1 30); do
     sleep 2
@@ -104,7 +113,7 @@ for i in $(seq 1 30); do
     fi
 done
 
-# ── 9. Open browser ───────────────────────────────────────────────────────────
+# ── 10. Open browser ──────────────────────────────────────────────────────────
 ok "App is ready!"
 open "$APP_URL"
 

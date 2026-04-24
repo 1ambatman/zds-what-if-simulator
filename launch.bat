@@ -9,21 +9,32 @@ echo ╚════════════════════════
 echo.
 
 cd /d "%~dp0"
+set DATABRICKS_HOST=https://adb-3834014070274745.5.azuredatabricks.net
 
-:: ── 1. Check Databricks CLI auth ──────────────────────────────────────────────
-if not exist "%USERPROFILE%\.databrickscfg" (
-    echo [ERROR] Databricks CLI is not set up.
-    echo.
-    echo   Run this command in a terminal first, then relaunch:
-    echo.
-    echo     databricks auth login
-    echo.
-    pause
-    exit /b 1
+:: ── 1. Install Databricks CLI if missing ──────────────────────────────────────
+databricks --version >nul 2>&1
+if errorlevel 1 (
+    echo Installing Databricks CLI...
+    powershell -Command "& { $url='https://raw.githubusercontent.com/databricks/setup-cli/main/install.ps1'; Invoke-Expression (Invoke-WebRequest -Uri $url -UseBasicParsing).Content }"
+    if errorlevel 1 (
+        echo [ERROR] Could not install Databricks CLI automatically.
+        echo   Please install it manually from: https://docs.databricks.com/en/dev-tools/cli/install.html
+        pause
+        exit /b 1
+    )
+    echo [OK] Databricks CLI installed
 )
-echo [OK] Databricks auth found
+echo [OK] Databricks CLI ready
 
-:: ── 2. Create .env if missing ─────────────────────────────────────────────────
+:: ── 2. Log in if not authenticated ────────────────────────────────────────────
+databricks auth token --host "%DATABRICKS_HOST%" >nul 2>&1
+if errorlevel 1 (
+    echo Logging in to Databricks ^(browser will open^)...
+    databricks auth login --host "%DATABRICKS_HOST%"
+)
+echo [OK] Databricks auth OK
+
+:: ── 3. Create .env if missing ─────────────────────────────────────────────────
 if not exist ".env" (
     echo Creating .env with defaults...
     (
@@ -37,7 +48,7 @@ if not exist ".env" (
     echo [OK] .env created
 )
 
-:: ── 3. Mount .databrickscfg into the container ────────────────────────────────
+:: ── 4. Mount .databrickscfg into the container ────────────────────────────────
 (
     echo services:
     echo   app:
@@ -45,7 +56,7 @@ if not exist ".env" (
     echo       - %USERPROFILE%\.databrickscfg:/root/.databrickscfg:ro
 ) > docker-compose.override.yml
 
-:: ── 4. Check Docker ───────────────────────────────────────────────────────────
+:: ── 5. Check Docker ───────────────────────────────────────────────────────────
 docker --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Docker Desktop is not installed.
@@ -57,7 +68,7 @@ if errorlevel 1 (
 )
 echo [OK] Docker found
 
-:: ── 5. Start Docker daemon if not running ─────────────────────────────────────
+:: ── 6. Start Docker daemon if not running ─────────────────────────────────────
 docker info >nul 2>&1
 if errorlevel 1 (
     echo Docker Desktop is not running. Starting it...
@@ -74,15 +85,15 @@ if errorlevel 1 (
 :docker_ready
 echo [OK] Docker is running
 
-:: ── 6. Pull latest image ──────────────────────────────────────────────────────
+:: ── 7. Pull latest image ──────────────────────────────────────────────────────
 echo Pulling latest image ^(first run may take a few minutes^)...
 docker compose pull
 
-:: ── 7. Start container ────────────────────────────────────────────────────────
+:: ── 8. Start container ────────────────────────────────────────────────────────
 echo Starting app...
 docker compose up -d
 
-:: ── 8. Wait for health check ──────────────────────────────────────────────────
+:: ── 9. Wait for health check ──────────────────────────────────────────────────
 echo Waiting for app to be ready...
 for /L %%i in (1,1,30) do (
     timeout /t 2 /nobreak >nul

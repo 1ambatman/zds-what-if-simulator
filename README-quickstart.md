@@ -3,18 +3,17 @@
 ## Prerequisites
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
-- Databricks CLI set up — if you use the AI Dev Kit you already have this. Otherwise run:
-  ```
-  databricks auth login
-  ```
+
+That's it — everything else (Databricks CLI, authentication) is handled automatically on first launch.
 
 ## Run
 
 **Mac:**
-1. Right-click `launch.command` → click **Open** → click **Open** again (first run only — macOS security prompt)
-2. The app opens automatically in your browser
+1. Right-click `launch.command` → click **Open** → click **Open** again *(first run only — macOS security prompt)*
+2. If this is your first time, a browser window will open to log in to Databricks — sign in and close it
+3. The app opens automatically
 
-**Windows:** double-click `launch.bat`
+**Windows:** double-click `launch.bat` and follow any prompts.
 
 The app is at **http://localhost:8765**.
 
